@@ -252,16 +252,33 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       // OpenAI Realtime API WebRTC call creation
       // The endpoint expects the SDP offer in the body with Content-Type: application/sdp
       // Based on official pattern: send SDP immediately after setting local description
-      const callUrl = 'https://api.openai.com/v1/realtime/calls'
-      
-      const sdpResponse = await fetch(callUrl, {
+      const primaryCallUrl = 'https://api.openai.com/v1/realtime/calls'
+      const fallbackCallUrl = 'https://api.openai.com/v1/realtime'
+
+      let sdpResponse = await fetch(primaryCallUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${ephemeralTokenRef.current}`,
           'Content-Type': 'application/sdp',
+          // Some Realtime endpoints require the beta header; harmless if not required.
+          'OpenAI-Beta': 'realtime=v1',
         },
         body: offer.sdp,
       })
+
+      // Some environments / versions may use a different endpoint; retry once on 400.
+      if (!sdpResponse.ok && sdpResponse.status === 400) {
+        console.warn('Call creation returned 400; retrying with fallback endpoint:', fallbackCallUrl)
+        sdpResponse = await fetch(fallbackCallUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${ephemeralTokenRef.current}`,
+            'Content-Type': 'application/sdp',
+            'OpenAI-Beta': 'realtime=v1',
+          },
+          body: offer.sdp,
+        })
+      }
 
       if (!sdpResponse.ok) {
         const errorText = await sdpResponse.text()

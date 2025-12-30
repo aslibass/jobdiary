@@ -21,14 +21,23 @@ export async function POST(request: NextRequest) {
     // We must set the Realtime model at session-creation time. The WebRTC call is created
     // *before* the data channel opens, so relying on `session.update` alone can leave
     // the session with `model: ""`, which can cause `/v1/realtime/calls` to 400.
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions?model=gpt-realtime-mini', {
+    // IMPORTANT:
+    // Railway logs show OpenAI returning `model: ""` when we pass `?model=...`.
+    // So we set the model explicitly in the POST body to ensure the session has a model
+    // *before* the WebRTC call is created.
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
+        // Some Realtime endpoints require the beta header; harmless if not required.
+        'OpenAI-Beta': 'realtime=v1',
       },
-      // No body - session will be configured via session.update after WebRTC connection
-      // Some implementations send initial config here, but we configure via data channel
+      body: JSON.stringify({
+        model: 'gpt-realtime-mini',
+        // We still configure most behavior via session.update over the data channel,
+        // but model must exist at creation time.
+      }),
     })
 
     if (!response.ok) {
