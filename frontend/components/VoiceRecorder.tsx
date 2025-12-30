@@ -111,19 +111,21 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       dataChannel.onopen = () => {
         console.log('Data channel opened')
         // Configure session via data channel
+        // Using gpt-realtime-mini model with whisper-1 for transcription
         dataChannel.send(JSON.stringify({
           type: 'session.update',
           session: {
-            modalities: ['text'],
+            model: 'gpt-realtime-mini', // Use gpt-realtime-mini for cost efficiency
+            modalities: ['text'], // or ['text', 'audio'] for speech-to-speech
             instructions: 'You are a transcription assistant for a job diary app. Transcribe the user\'s speech accurately. Only provide the transcript, no commentary.',
-            voice: 'alloy',
+            voice: 'alloy', // Options: alloy, echo, fable, onyx, nova, shimmer
             input_audio_format: 'pcm16',
             output_audio_format: 'pcm16',
             input_audio_transcription: {
-              model: 'whisper-1',
+              model: 'whisper-1', // Use whisper-1 for transcription
             },
             turn_detection: {
-              type: 'server_vad',
+              type: 'server_vad', // Server-side voice activity detection
               threshold: 0.5,
               prefix_padding_ms: 300,
               silence_duration_ms: 500,
