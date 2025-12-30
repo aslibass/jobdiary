@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import settings, normalize_api_url
 from app.db import get_db, Base, engine
 from app.models import Job, Entry
 from app.schemas import (
@@ -58,9 +58,10 @@ def custom_openapi():
     )
     
     # Add servers - use API_URL if configured, otherwise use a placeholder
-    if settings.api_url:
+    api_url = normalize_api_url(settings.api_url)
+    if api_url:
         openapi_schema["servers"] = [
-            {"url": settings.api_url, "description": "Production server"}
+            {"url": api_url, "description": "Production server"}
         ]
     else:
         # Use a placeholder that can be updated by the user
