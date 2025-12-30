@@ -11,20 +11,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Request ephemeral client secret from OpenAI using REST API
+    // Request ephemeral session from OpenAI using REST API
     // IMPORTANT: keep your normal API key on the server only
-    // Try with ttl_seconds first, if that fails, try without body
-    const requestBody = {
-      ttl_seconds: 300, // Token expires in 300 seconds (5 minutes) - keep TTL short
-    }
-    
-    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    // Based on OpenAI's official realtime-agents repo pattern
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestBody),
+      // Sessions endpoint may not require a body, or may accept optional config
+      // If body is needed, it would be session configuration
     })
 
     if (!response.ok) {
@@ -47,10 +44,21 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json()
     
+    // OpenAI sessions endpoint returns ephemeral session token
+    // Format may be: { client_secret: "..." } or { session: { client_secret: "..." } }
+    const clientSecret = data.client_secret || data.session?.client_secret || data.token
+    
+    if (!clientSecret) {
+      console.error('Unexpected response format:', data)
+      return NextResponse.json(
+        { error: 'Unexpected response format from OpenAI' },
+        { status: 500 }
+      )
+    }
+    
     // Return ONLY the client secret to the client
-    // OpenAI returns: { client_secret: "..." }
     return NextResponse.json({
-      client_secret: data.client_secret,
+      client_secret: clientSecret,
     })
   } catch (error: any) {
     console.error('Error creating ephemeral token:', error)

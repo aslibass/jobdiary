@@ -72,17 +72,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Request ephemeral client secret from OpenAI
+    // Request ephemeral session from OpenAI
     // IMPORTANT: keep your normal API key on the server only
-    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+    // Based on OpenAI's official realtime-agents repo: https://github.com/openai/openai-realtime-agents
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        ttl_seconds: 300, // Token expires in 300 seconds (5 minutes) - keep TTL short
-      }),
+      // Sessions endpoint creates an ephemeral session - body may be optional
     })
 
     if (!response.ok) {
@@ -96,10 +95,21 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json()
     
+    // OpenAI sessions endpoint returns ephemeral session token
+    // Format may vary: { client_secret: "..." } or { session: { client_secret: "..." } }
+    const clientSecret = data.client_secret || data.session?.client_secret || data.token
+    
+    if (!clientSecret) {
+      console.error('Unexpected response format:', data)
+      return NextResponse.json(
+        { error: 'Unexpected response format from OpenAI' },
+        { status: 500 }
+      )
+    }
+    
     // Return ONLY the client secret to the client
-    // OpenAI returns: { client_secret: "..." }
     return NextResponse.json({
-      client_secret: data.client_secret,
+      client_secret: clientSecret,
     })
   } catch (error: any) {
     console.error('Error creating ephemeral token:', error)
@@ -501,11 +511,12 @@ const { client_secret } = await tokenResp.json()
 ### ❌ Pitfall 2: Wrong Endpoint
 
 ```typescript
-// ❌ BAD: Wrong endpoint
+// ❌ BAD: Wrong endpoints
 fetch('https://api.openai.com/v1/realtime/ephemeral_keys', ...)
+fetch('https://api.openai.com/v1/realtime/client_secrets', ...) // May not exist
 
-// ✅ GOOD: Correct endpoint
-fetch('https://api.openai.com/v1/realtime/client_secrets', ...)
+// ✅ GOOD: Correct endpoint (based on official OpenAI realtime-agents repo)
+fetch('https://api.openai.com/v1/realtime/sessions', ...)
 ```
 
 ### ❌ Pitfall 3: Wrong Data Channel Name
