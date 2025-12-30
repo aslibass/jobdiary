@@ -47,21 +47,43 @@ export async function POST(request: NextRequest) {
     console.log('OpenAI sessions response:', JSON.stringify(data, null, 2))
     
     // OpenAI sessions endpoint returns ephemeral session token
-    // Format may be: { client_secret: "..." } or { session: { client_secret: "..." } }
-    // Or it might be nested differently - check all possible paths
-    const clientSecret = 
-      data.client_secret || 
-      data.session?.client_secret || 
-      data.token ||
-      data.client_secrets?.client_secret ||
-      (typeof data === 'string' ? data : null)
+    // The response format can vary - handle multiple possible structures
+    let clientSecret: string | null = null
     
-    if (!clientSecret) {
+    // Try different possible response formats
+    if (typeof data === 'string') {
+      clientSecret = data
+    } else if (typeof data.client_secret === 'string') {
+      clientSecret = data.client_secret
+    } else if (data.client_secret && typeof data.client_secret === 'object') {
+      // If client_secret is an object, try to extract the actual secret
+      clientSecret = data.client_secret.client_secret || 
+                    data.client_secret.secret || 
+                    data.client_secret.token ||
+                    data.client_secret.value ||
+                    null
+    } else if (data.session?.client_secret) {
+      if (typeof data.session.client_secret === 'string') {
+        clientSecret = data.session.client_secret
+      } else if (typeof data.session.client_secret === 'object') {
+        clientSecret = data.session.client_secret.client_secret || 
+                      data.session.client_secret.secret || 
+                      data.session.client_secret.token ||
+                      null
+      }
+    } else if (data.token && typeof data.token === 'string') {
+      clientSecret = data.token
+    } else if (data.client_secrets?.client_secret) {
+      clientSecret = data.client_secrets.client_secret
+    }
+    
+    if (!clientSecret || typeof clientSecret !== 'string') {
       console.error('Unexpected response format from OpenAI:', JSON.stringify(data, null, 2))
+      console.error('client_secret type:', typeof data.client_secret, 'value:', data.client_secret)
       return NextResponse.json(
         { 
           error: 'Unexpected response format from OpenAI',
-          details: `Expected client_secret but got: ${JSON.stringify(data)}`
+          details: `Could not extract client_secret string. Response: ${JSON.stringify(data)}`
         },
         { status: 500 }
       )

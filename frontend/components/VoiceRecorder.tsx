@@ -78,14 +78,27 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       }
 
       const tokenData = await tokenResponse.json()
-      console.log('Token response received:', { hasClientSecret: !!tokenData.client_secret })
+      console.log('Token response received:', { 
+        hasClientSecret: !!tokenData.client_secret,
+        clientSecretType: typeof tokenData.client_secret,
+        clientSecretValue: tokenData.client_secret
+      })
       
       // Server returns: { client_secret: "..." }
       const clientSecret = tokenData.client_secret
       
-      if (!clientSecret || typeof clientSecret !== 'string') {
-        console.error('Invalid client_secret in response:', tokenData)
-        throw new Error('Failed to get ephemeral token: missing or invalid client_secret')
+      if (!clientSecret) {
+        console.error('No client_secret in response:', tokenData)
+        throw new Error('Failed to get ephemeral token: missing client_secret')
+      }
+      
+      if (typeof clientSecret !== 'string') {
+        console.error('Invalid client_secret type in response:', {
+          type: typeof clientSecret,
+          value: clientSecret,
+          fullResponse: tokenData
+        })
+        throw new Error(`Failed to get ephemeral token: client_secret is ${typeof clientSecret}, expected string`)
       }
       
       ephemeralTokenRef.current = clientSecret
