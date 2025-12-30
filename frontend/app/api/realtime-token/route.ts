@@ -15,14 +15,16 @@ export async function POST(request: NextRequest) {
     // IMPORTANT: keep your normal API key on the server only
     // Based on OpenAI's official realtime-agents repo: https://github.com/openai/openai-realtime-agents
     // The sessions endpoint creates an ephemeral session token
-    // Model is configured via session.update in the client after WebRTC connection
+    // We can optionally configure the session here, or via session.update after WebRTC connection
+    // For now, we'll create a basic session and configure it via data channel
     const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
       },
-      // No body needed - session configuration happens via session.update after connection
+      // No body - session will be configured via session.update after WebRTC connection
+      // Some implementations send initial config here, but we configure via data channel
     })
 
     if (!response.ok) {
