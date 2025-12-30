@@ -46,6 +46,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
   const startLockRef = useRef<boolean>(false)
   const stopRequestedRef = useRef<boolean>(false)
   const phaseRef = useRef<string>('idle')
+  const draftRestoreNotifiedRef = useRef<boolean>(false)
 
   const setPhaseSafe = (p: string) => {
     phaseRef.current = p
@@ -96,8 +97,11 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
           setTranscript(draftData.transcript)
           accumulatedTranscriptRef.current = draftData.transcript
           if (draftData.timestamp && Date.now() - draftData.timestamp < 24 * 60 * 60 * 1000) {
-            // Draft is less than 24 hours old
-            onToast?.('Draft restored from previous session', 'info')
+            // Draft is less than 24 hours old; only notify once
+            if (!draftRestoreNotifiedRef.current) {
+              draftRestoreNotifiedRef.current = true
+              onToast?.('Draft restored from previous session', 'info')
+            }
           }
         }
       } catch (e) {
@@ -937,6 +941,9 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
             onClick={() => {
               setTranscript('')
               accumulatedTranscriptRef.current = ''
+              // Also clear any persisted draft so it doesn't restore again
+              localStorage.removeItem('jobdiary_draft')
+              onToast?.('Draft cleared', 'info')
             }}
             disabled={disabled || isProcessing}
             className="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 

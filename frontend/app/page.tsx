@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import VoiceRecorder from '@/components/VoiceRecorder'
 import JobList from '@/components/JobList'
 import EntryList from '@/components/EntryList'
@@ -100,9 +100,9 @@ export default function Home() {
     }
   }
 
-  const handleToast = (message: string, type?: 'success' | 'error' | 'info') => {
+  const handleToast = useCallback((message: string, type?: 'success' | 'error' | 'info') => {
     setToast({ message, type })
-  }
+  }, [])
 
   const handleVoiceCommand = async (cmd: VoiceCommand) => {
     switch (cmd.type) {
