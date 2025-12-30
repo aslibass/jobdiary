@@ -42,6 +42,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
   const animationFrameRef = useRef<number | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   const assistantStreamingRef = useRef<boolean>(false)
+  const startLockRef = useRef<boolean>(false)
 
   const appendMessage = (role: ChatRole, text: string) => {
     const id = `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -168,7 +169,10 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
   }
 
   const startRecording = async () => {
+    // Hard lock to prevent double-trigger (mobile can fire multiple events quickly)
+    if (startLockRef.current) return
     if (isRecording || disabled) return
+    startLockRef.current = true
 
     setError(null)
     setIsConnecting(true)
@@ -248,6 +252,16 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       })
       peerConnectionRef.current = pc
 
+      pc.onconnectionstatechange = () => {
+        console.log('PC connectionState:', pc.connectionState)
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+          onToast?.(`Connection ${pc.connectionState}`, 'error')
+        }
+      }
+      pc.oniceconnectionstatechange = () => {
+        console.log('PC iceConnectionState:', pc.iceConnectionState)
+      }
+
       // Play assistant audio back to user (speech-to-speech)
       pc.ontrack = (e) => {
         const stream = e.streams?.[0]
@@ -267,6 +281,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       // OpenAI Realtime API uses 'oai-events' as the data channel name
       const dataChannel = pc.createDataChannel('oai-events', { ordered: true })
       dataChannelRef.current = dataChannel
+      dataChannel.onclose = () => console.log('Data channel closed')
+      dataChannel.onerror = (e) => console.error('Data channel error', e)
 
       dataChannel.onmessage = (event) => {
         try {
@@ -485,10 +501,14 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       setError(err.message || 'Failed to start recording. Please check microphone permissions.')
       setIsConnecting(false)
       stopRecording()
+    } finally {
+      // allow re-entry after the attempt finishes
+      startLockRef.current = false
     }
   }
 
   const stopRecording = () => {
+    startLockRef.current = false
     // Stop duration timer
     if (durationIntervalRef.current) {
       clearInterval(durationIntervalRef.current)
