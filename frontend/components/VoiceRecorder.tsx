@@ -256,8 +256,12 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       console.log('Creating WebRTC call with ephemeral token...')
       console.log('SDP offer length:', offer.sdp.length)
       console.log('SDP offer preview:', offer.sdp.substring(0, 100))
+      console.log('Using token:', ephemeralTokenRef.current.substring(0, 10) + '...')
       
-      const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
+      // Try the standard endpoint first
+      let callUrl = 'https://api.openai.com/v1/realtime/calls'
+      
+      const sdpResponse = await fetch(callUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${ephemeralTokenRef.current}`,

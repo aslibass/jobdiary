@@ -94,9 +94,13 @@ export async function POST(request: NextRequest) {
     
     console.log('Successfully extracted client_secret (length:', clientSecret.length, ')')
     
-    // Return ONLY the client secret to the client
+    // Also return session ID if available (might be needed for call creation)
+    const sessionId = data.id || data.session?.id || null
+    
+    // Return client secret and session ID to the client
     return NextResponse.json({
       client_secret: clientSecret,
+      session_id: sessionId, // Include session ID in case it's needed
     })
   } catch (error: any) {
     console.error('Error creating ephemeral token:', error)
