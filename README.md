@@ -335,7 +335,11 @@ alembic downgrade -1
 
 ## License
 
-MIT
+Copyright (c) 2025 Viren Joseph. All rights reserved.
+
+This project is **proprietary**. See `LICENSE`.
+
+Third-party/open source notices: see `THIRD_PARTY_NOTICES.md`.
 
 ## Contributing
 

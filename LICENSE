@@ -1,23 +1,56 @@
-MIT License
+JOBDIARY COMMERCIAL / PROPRIETARY LICENSE
 
-Copyright (c) 2025 Viren Joseph
+Copyright (c) 2025 Viren Joseph.
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+IMPORTANT: This repository is provided under a proprietary license. You may not
+use, copy, modify, distribute, sublicense, or sell this software or any portion
+of it except as expressly permitted in a separate written agreement with the
+copyright holder.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. DEFINITIONS
+   - "Software" means the source code, documentation, and any associated files
+     in this repository.
+   - "You" means any individual or entity accessing or using the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. NO LICENSE GRANTED
+   No rights are granted to You by this License. All rights not expressly
+   granted in a signed written agreement are reserved by the copyright holder.
+
+3. PERMITTED USE (EVALUATION ONLY, OPTIONAL)
+   Unless you have a separate signed written agreement, you may view the
+   Software solely for evaluation purposes. You may not run it in production,
+   provide it as a service, distribute it, or create derivative works.
+
+4. RESTRICTIONS
+   You must not:
+   - copy or redistribute the Software, in whole or in part;
+   - modify, adapt, translate, or create derivative works of the Software;
+   - remove or alter copyright, trademark, or attribution notices;
+   - use the Software to provide a hosted service (SaaS) or otherwise make it
+     available to third parties.
+
+5. THIRD-PARTY COMPONENTS
+   The Software may depend on third-party open source components. Those
+   components are governed by their respective licenses. See
+   THIRD_PARTY_NOTICES.md for required attributions and license notices.
+
+6. DISCLAIMER
+   THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE COPYRIGHT
+   HOLDER BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR
+   PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS OR REVENUES, WHETHER INCURRED
+   DIRECTLY OR INDIRECTLY, OR ANY LOSS OF DATA, USE, GOODWILL, OR OTHER
+   INTANGIBLE LOSSES, RESULTING FROM YOUR USE OF THE SOFTWARE.
+
+8. TERMINATION
+   Any breach of this License terminates any permissions immediately.
+
+9. CONTACT
+   For commercial licensing inquiries, contact: viren.joseph@gmail.com
 
 
