@@ -27,6 +27,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const updateTheme = (newTheme: Theme) => {
+    if (typeof window === 'undefined') return
     const root = document.documentElement
     if (newTheme === 'dark') {
       root.classList.add('dark')
@@ -42,10 +43,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     updateTheme(newTheme)
   }
 
-  if (!mounted) {
-    return <>{children}</>
-  }
-
+  // Always provide context, even during SSR
+  // This prevents "useTheme must be used within a ThemeProvider" errors
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
       {children}
