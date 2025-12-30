@@ -73,12 +73,23 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
 
       if (!tokenResponse.ok) {
         const error = await tokenResponse.json()
-        throw new Error(error.error || 'Failed to get ephemeral token')
+        console.error('Token request failed:', error)
+        throw new Error(error.error || error.details || 'Failed to get ephemeral token')
       }
 
       const tokenData = await tokenResponse.json()
+      console.log('Token response received:', { hasClientSecret: !!tokenData.client_secret })
+      
       // Server returns: { client_secret: "..." }
-      ephemeralTokenRef.current = tokenData.client_secret
+      const clientSecret = tokenData.client_secret
+      
+      if (!clientSecret || typeof clientSecret !== 'string') {
+        console.error('Invalid client_secret in response:', tokenData)
+        throw new Error('Failed to get ephemeral token: missing or invalid client_secret')
+      }
+      
+      ephemeralTokenRef.current = clientSecret
+      console.log('Ephemeral token received and stored (length:', clientSecret.length, ')')
 
       // Step 2: Get user's microphone
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -197,6 +208,11 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       await pc.setLocalDescription(offer)
 
       // Step 6: Send SDP offer to OpenAI Realtime API
+      if (!ephemeralTokenRef.current) {
+        throw new Error('Ephemeral token is missing. Please try again.')
+      }
+      
+      console.log('Creating WebRTC call with ephemeral token...')
       const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
         headers: {

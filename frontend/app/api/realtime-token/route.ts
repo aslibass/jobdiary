@@ -44,18 +44,30 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json()
+    console.log('OpenAI sessions response:', JSON.stringify(data, null, 2))
     
     // OpenAI sessions endpoint returns ephemeral session token
     // Format may be: { client_secret: "..." } or { session: { client_secret: "..." } }
-    const clientSecret = data.client_secret || data.session?.client_secret || data.token
+    // Or it might be nested differently - check all possible paths
+    const clientSecret = 
+      data.client_secret || 
+      data.session?.client_secret || 
+      data.token ||
+      data.client_secrets?.client_secret ||
+      (typeof data === 'string' ? data : null)
     
     if (!clientSecret) {
-      console.error('Unexpected response format:', data)
+      console.error('Unexpected response format from OpenAI:', JSON.stringify(data, null, 2))
       return NextResponse.json(
-        { error: 'Unexpected response format from OpenAI' },
+        { 
+          error: 'Unexpected response format from OpenAI',
+          details: `Expected client_secret but got: ${JSON.stringify(data)}`
+        },
         { status: 500 }
       )
     }
+    
+    console.log('Successfully extracted client_secret (length:', clientSecret.length, ')')
     
     // Return ONLY the client secret to the client
     return NextResponse.json({
