@@ -271,6 +271,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
       pc.onconnectionstatechange = () => {
         console.log('PC connectionState:', pc.connectionState)
+        // Ignore events from stale peer connections
+        if (peerConnectionRef.current !== pc) return
         if (!stopRequestedRef.current && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed')) {
           const msg = `Realtime connection ${pc.connectionState}`
           onToast?.(msg, 'error')
@@ -280,11 +282,15 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
         }
       }
       pc.oniceconnectionstatechange = () => {
+        // Ignore events from stale peer connections
+        if (peerConnectionRef.current !== pc) return
         console.log('PC iceConnectionState:', pc.iceConnectionState)
       }
 
       // Play assistant audio back to user (speech-to-speech)
       pc.ontrack = (e) => {
+        // Ignore track events from stale peer connections
+        if (peerConnectionRef.current !== pc) return
         const stream = e.streams?.[0]
         if (stream && audioPlayerRef.current) {
           audioPlayerRef.current.srcObject = stream
@@ -303,10 +309,19 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       setPhaseSafe('creating_data_channel')
       const dataChannel = pc.createDataChannel('oai-events', { ordered: true })
       dataChannelRef.current = dataChannel
-      dataChannel.onerror = (e) => console.error('Data channel error', e)
+      dataChannel.onerror = (e) => {
+        // Ignore errors from stale data channels
+        if (dataChannelRef.current !== dataChannel) return
+        console.error('Data channel error', e)
+      }
 
       dataChannel.onclose = () => {
         console.log('Data channel closed')
+        // Ignore close events from stale data channels (previous sessions)
+        if (dataChannelRef.current !== dataChannel) {
+          console.log('Ignoring stale data channel close')
+          return
+        }
         if (!stopRequestedRef.current) {
           const msg = 'Realtime data channel closed unexpectedly'
           onToast?.(msg, 'error')
@@ -317,6 +332,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       }
 
       dataChannel.onmessage = (event) => {
+        // Ignore messages from stale data channels
+        if (dataChannelRef.current !== dataChannel) return
         try {
           const data = JSON.parse(event.data)
 
@@ -398,6 +415,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       }
 
       dataChannel.onopen = () => {
+        // Ignore open events from stale data channels
+        if (dataChannelRef.current !== dataChannel) return
         console.log('Data channel opened')
         // Configure session via data channel
         // Enable two-way conversation:
@@ -578,16 +597,18 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
     }
     analyserRef.current = null
 
-    // Close data channel
+    // Close data channel - nullify ref first so stale handlers ignore events
     if (dataChannelRef.current) {
-      dataChannelRef.current.close()
+      const dc = dataChannelRef.current
       dataChannelRef.current = null
+      dc.close()
     }
 
-    // Close peer connection
+    // Close peer connection - nullify ref first so stale handlers ignore events
     if (peerConnectionRef.current) {
-      peerConnectionRef.current.close()
+      const pc = peerConnectionRef.current
       peerConnectionRef.current = null
+      pc.close()
     }
 
     // Stop media stream
