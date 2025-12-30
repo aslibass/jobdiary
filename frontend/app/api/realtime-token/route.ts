@@ -11,16 +11,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Request ephemeral token from OpenAI using REST API
-    // The OpenAI SDK doesn't have a method for this, so we use fetch directly
-    const response = await fetch('https://api.openai.com/v1/realtime/ephemeral_keys', {
+    // Request ephemeral client secret from OpenAI using REST API
+    // IMPORTANT: keep your normal API key on the server only
+    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        expires_in: 60, // Token expires in 60 seconds
+        ttl_seconds: 300, // Token expires in 300 seconds (5 minutes) - keep TTL short
       }),
     })
 
@@ -35,12 +35,10 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json()
     
-    // OpenAI returns ephemeral key in client_secret.value
-    const ephemeralKey = data.client_secret?.value || data.value
-    
+    // Return ONLY the client secret to the client
+    // OpenAI returns: { client_secret: "..." }
     return NextResponse.json({
-      value: ephemeralKey,
-      expires_at: data.client_secret?.expires_at || data.expires_at,
+      client_secret: data.client_secret,
     })
   } catch (error: any) {
     console.error('Error creating ephemeral token:', error)
