@@ -14,14 +14,14 @@ export async function POST(request: NextRequest) {
     // Request ephemeral session from OpenAI using REST API
     // IMPORTANT: keep your normal API key on the server only
     // Based on OpenAI's official realtime-agents repo pattern
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    // Using gpt-realtime-mini model for cost efficiency
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions?model=gpt-realtime-mini', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
       },
-      // Sessions endpoint may not require a body, or may accept optional config
-      // If body is needed, it would be session configuration
+      // Sessions endpoint creates an ephemeral session - body may be optional
     })
 
     if (!response.ok) {
