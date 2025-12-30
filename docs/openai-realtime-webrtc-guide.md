@@ -29,10 +29,10 @@ A secure, production-ready guide for integrating OpenAI's Realtime API using Web
 │  (Client)   │         │  (Next.js)    │         │   API        │
 └──────┬──────┘         └──────┬───────┘         └──────┬──────┘
        │                        │                        │
-       │ 1. GET /realtime-token │                        │
+       │ 1. POST /realtime-token│                        │
        │───────────────────────>│                        │
        │                        │ 2. POST /v1/realtime/  │
-       │                        │    client_secrets      │
+       │                        │    sessions            │
        │                        │───────────────────────>│
        │                        │                        │
        │                        │ 3. { client_secret }   │
@@ -73,34 +73,38 @@ export async function POST(request: NextRequest) {
     }
 
     // Request ephemeral session from OpenAI
-    // IMPORTANT: keep your normal API key on the server only
+    // IMPORTANT: Use POST body to specify model (required for the session)
     // Based on OpenAI's official realtime-agents repo: https://github.com/openai/openai-realtime-agents
-    // Using gpt-realtime-mini model for cost efficiency
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions?model=gpt-realtime-mini', {
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
         'Content-Type': 'application/json',
       },
-      // Sessions endpoint creates an ephemeral session - body may be optional
+      body: JSON.stringify({
+        model: 'gpt-realtime-mini', // REQUIRED: specify model in session creation
+      }),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
       console.error('OpenAI API error:', response.status, errorText)
       return NextResponse.json(
-        { error: `Failed to create ephemeral token: ${response.status}` },
+        { error: `Failed to create ephemeral token: ${response.status}`, details: errorText },
         { status: response.status }
       )
     }
 
     const data = await response.json()
     
-    // OpenAI sessions endpoint returns ephemeral session token
-    // Format may vary: { client_secret: "..." } or { session: { client_secret: "..." } }
-    const clientSecret = data.client_secret || data.session?.client_secret || data.token
-    
-    if (!clientSecret) {
+    // OpenAI sessions endpoint returns { client_secret: { value: "ek_...", expires_at: ... }, ... }
+    // or older format: { client_secret: "ek_..." }
+    let clientSecret: string
+    if (typeof data.client_secret === 'object' && data.client_secret?.value) {
+      clientSecret = data.client_secret.value
+    } else if (typeof data.client_secret === 'string') {
+      clientSecret = data.client_secret
+    } else {
       console.error('Unexpected response format:', data)
       return NextResponse.json(
         { error: 'Unexpected response format from OpenAI' },
@@ -111,6 +115,7 @@ export async function POST(request: NextRequest) {
     // Return ONLY the client secret to the client
     return NextResponse.json({
       client_secret: clientSecret,
+      session_id: data.id, // Optional: useful for debugging
     })
   } catch (error: any) {
     console.error('Error creating ephemeral token:', error)
@@ -130,18 +135,17 @@ import express from "express";
 
 const app = express();
 
-app.get("/realtime-token", async (req, res) => {
+app.post("/realtime-token", async (req, res) => {
   try {
     // IMPORTANT: keep your normal API key on the server only
-    const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    const r = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        // keep TTL short (e.g., 60–600s)
-        ttl_seconds: 300,
+        model: "gpt-realtime-mini", // REQUIRED
       }),
     });
 
@@ -151,8 +155,13 @@ app.get("/realtime-token", async (req, res) => {
     }
 
     const data = await r.json();
-    // Return ONLY the client secret to the client
-    res.json({ client_secret: data.client_secret });
+    
+    // Handle both response formats
+    const clientSecret = typeof data.client_secret === 'object' 
+      ? data.client_secret.value 
+      : data.client_secret;
+      
+    res.json({ client_secret: clientSecret });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
@@ -161,37 +170,11 @@ app.get("/realtime-token", async (req, res) => {
 app.listen(3000, () => console.log("listening on :3000"));
 ```
 
-#### Security Enhancements
-
-```typescript
-// Add rate limiting and authentication
-import { rateLimit } from '@/lib/rate-limit'
-import { getCurrentUser } from '@/lib/auth'
-
-export async function POST(request: NextRequest) {
-  // 1. Authenticate user
-  const user = await getCurrentUser(request)
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // 2. Rate limit (e.g., 10 tokens per minute per user)
-  const rateLimitResult = await rateLimit(user.id, 10, 60)
-  if (!rateLimitResult.success) {
-    return NextResponse.json(
-      { error: 'Rate limit exceeded' },
-      { status: 429 }
-    )
-  }
-
-  // 3. Generate ephemeral token
-  // ... (rest of implementation)
-}
-```
-
 ### Part 2: Client-Side WebRTC Implementation
 
-#### Complete Browser Example
+#### Complete Browser Example with Race Condition Protection
+
+The most critical issue in WebRTC implementations is **stale event handlers**. When a recording session is stopped and a new one starts, old event handlers can fire and corrupt the new session's state.
 
 ```typescript
 // components/VoiceRecorder.tsx
@@ -201,83 +184,181 @@ import { useState, useRef } from 'react'
 
 export default function VoiceRecorder() {
   const [isRecording, setIsRecording] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
   const [transcript, setTranscript] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  
+  // Refs for WebRTC resources
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const dataChannelRef = useRef<RTCDataChannel | null>(null)
   const clientSecretRef = useRef<string | null>(null)
+  
+  // CRITICAL: Flags to prevent race conditions
+  const startLockRef = useRef<boolean>(false)        // Prevent double-start
+  const stopRequestedRef = useRef<boolean>(false)    // Track intentional stops
 
   async function startRealtime() {
+    // CRITICAL: Prevent double-start (mobile can fire multiple events quickly)
+    if (startLockRef.current) return
+    if (isRecording || isConnecting) return
+    startLockRef.current = true
+    
+    setError(null)
+    setIsConnecting(true)
+    stopRequestedRef.current = false  // Reset stop flag for new session
+
     try {
       // 1) Get ephemeral token from YOUR server
-      const tokenResp = await fetch('/api/realtime-token', {
-        method: 'POST',
-      })
+      const tokenResp = await fetch('/api/realtime-token', { method: 'POST' })
       
       if (!tokenResp.ok) {
-        throw new Error('Failed to get ephemeral token')
+        const err = await tokenResp.json()
+        throw new Error(err.error || 'Failed to get ephemeral token')
       }
       
       const { client_secret } = await tokenResp.json()
+      
+      if (!client_secret || typeof client_secret !== 'string') {
+        throw new Error('Invalid client_secret received')
+      }
+      
       clientSecretRef.current = client_secret
 
-      // 2) Create peer connection
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      })
-      peerConnectionRef.current = pc
-
-      // Play model audio back to user (optional, for speech-to-speech)
-      const audioEl = document.createElement('audio')
-      audioEl.autoplay = true
-      pc.ontrack = (e) => {
-        audioEl.srcObject = e.streams[0]
-      }
-
-      // 3) Capture mic
+      // 2) Capture mic BEFORE creating peer connection
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           sampleRate: 24000, // OpenAI Realtime API requires 24kHz
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,
         },
       })
       mediaStreamRef.current = stream
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream))
 
-      // 4) Data channel for realtime events
-      // OpenAI requires the channel to be named "oai-events"
-      const dc = pc.createDataChannel('oai-events', { ordered: true })
-      dataChannelRef.current = dc
+      // 3) Create peer connection
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      })
+      peerConnectionRef.current = pc
 
-      dc.onmessage = (msg) => {
-        const evt = JSON.parse(msg.data)
-        // Handle events like:
-        // - conversation.item.input_audio_transcription.completed
-        // - response.audio_transcript.delta
-        // - response.audio_transcript.done
-        // - input_audio_buffer.speech_started
-        // - input_audio_buffer.speech_stopped
-        console.log('server event', evt)
+      // CRITICAL: Check for stale handlers in all event callbacks
+      pc.onconnectionstatechange = () => {
+        // Ignore events from stale peer connections
+        if (peerConnectionRef.current !== pc) return
+        console.log('PC connectionState:', pc.connectionState)
         
-        if (evt.type === 'conversation.item.input_audio_transcription.completed') {
-          setTranscript(prev => prev + ' ' + evt.transcript)
-        } else if (evt.type === 'response.audio_transcript.delta') {
-          setTranscript(prev => prev + evt.delta)
+        if (!stopRequestedRef.current && 
+            (pc.connectionState === 'failed' || 
+             pc.connectionState === 'disconnected' || 
+             pc.connectionState === 'closed')) {
+          setError(`Connection ${pc.connectionState}`)
+          setIsConnecting(false)
+          setIsRecording(false)
         }
       }
 
-      // 5) Create an SDP offer
-      const offer = await pc.createOffer()
+      pc.oniceconnectionstatechange = () => {
+        if (peerConnectionRef.current !== pc) return
+        console.log('PC iceConnectionState:', pc.iceConnectionState)
+      }
+
+      // Play model audio back to user (for two-way conversation)
+      const audioEl = document.createElement('audio')
+      audioEl.autoplay = true
+      pc.ontrack = (e) => {
+        if (peerConnectionRef.current !== pc) return
+        audioEl.srcObject = e.streams[0]
+      }
+
+      // Add audio track
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream))
+
+      // 4) Create data channel - MUST be named 'oai-events'
+      const dc = pc.createDataChannel('oai-events', { ordered: true })
+      dataChannelRef.current = dc
+
+      dc.onerror = (e) => {
+        if (dataChannelRef.current !== dc) return
+        console.error('Data channel error', e)
+      }
+
+      // CRITICAL: Check for stale data channel before handling close
+      dc.onclose = () => {
+        console.log('Data channel closed')
+        // Ignore close events from stale data channels (previous sessions)
+        if (dataChannelRef.current !== dc) {
+          console.log('Ignoring stale data channel close')
+          return
+        }
+        if (!stopRequestedRef.current) {
+          setError('Connection closed unexpectedly')
+          setIsConnecting(false)
+          setIsRecording(false)
+        }
+      }
+
+      dc.onmessage = (msg) => {
+        if (dataChannelRef.current !== dc) return
+        const evt = JSON.parse(msg.data)
+        console.debug('Realtime event:', evt.type)
+        
+        // Handle transcription events
+        if (evt.type === 'conversation.item.input_audio_transcription.completed') {
+          setTranscript(prev => prev + ' ' + evt.transcript)
+        } else if (evt.type === 'response.audio_transcript.delta') {
+          // Streaming assistant response
+        } else if (evt.type === 'error') {
+          console.error('Realtime API error:', evt)
+          setError(evt.error?.message || 'Transcription error')
+        }
+      }
+
+      dc.onopen = () => {
+        if (dataChannelRef.current !== dc) return
+        console.log('Data channel opened')
+        
+        // Configure session for two-way conversation
+        dc.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            model: 'gpt-realtime-mini',
+            modalities: ['text', 'audio'], // Enable both for speech-to-speech
+            instructions: 'You are a helpful assistant.',
+            voice: 'alloy',
+            input_audio_format: 'pcm16',
+            output_audio_format: 'pcm16',
+            input_audio_transcription: {
+              model: 'whisper-1',
+            },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
+              idle_timeout_ms: 30000,
+            },
+            temperature: 0.8,
+            max_response_output_tokens: 4096,
+          },
+        }))
+      }
+
+      // 5) Create SDP offer - don't wait for ICE gathering
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false,
+      })
       await pc.setLocalDescription(offer)
 
-      // 6) Send SDP to OpenAI Realtime "create call" endpoint
+      // 6) Send SDP to OpenAI Realtime "calls" endpoint
       const answerResp = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${client_secret}`,
           'Content-Type': 'application/sdp',
+          'OpenAI-Beta': 'realtime=v1', // May be required
         },
         body: offer.sdp,
       })
@@ -287,64 +368,45 @@ export default function VoiceRecorder() {
         throw new Error(`Failed to create call: ${errorText}`)
       }
 
+      // 7) Set remote description
       const answerSdp = await answerResp.text()
       await pc.setRemoteDescription({
         type: 'answer',
         sdp: answerSdp,
       })
 
-      // 7) Configure session behavior (voice, instructions, turn-taking, etc.)
-      dc.onopen = () => {
-        // Session updates are done by sending client events over the data channel
-        // Using gpt-realtime-mini model with whisper-1 for transcription
-        dc.send(JSON.stringify({
-          type: 'session.update',
-          session: {
-            model: 'gpt-realtime-mini', // Use gpt-realtime-mini for cost efficiency
-            modalities: ['text'], // or ['text', 'audio'] for speech-to-speech
-            instructions: 'You are a transcription assistant. Transcribe accurately.',
-            voice: 'alloy', // Options: alloy, echo, fable, onyx, nova, shimmer
-            input_audio_format: 'pcm16',
-            output_audio_format: 'pcm16',
-            input_audio_transcription: {
-              model: 'whisper-1', // Use whisper-1 for transcription
-            },
-            turn_detection: {
-              type: 'server_vad', // Server-side voice activity detection
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
-            },
-            temperature: 0.8,
-            max_response_output_tokens: 4096,
-          },
-        }))
-
-        // Optional: Ask it to respond (or rely on VAD to auto-respond)
-        // dc.send(JSON.stringify({ type: 'response.create' }))
-      }
-
+      setIsConnecting(false)
       setIsRecording(true)
-    } catch (error) {
-      console.error('Failed to start recording:', error)
-      // Handle error (show user message, etc.)
+      
+    } catch (err: any) {
+      console.error('Failed to start recording:', err)
+      setError(err.message || 'Failed to start recording')
+      setIsConnecting(false)
+      stopRecording()
+    } finally {
+      startLockRef.current = false
     }
   }
 
   function stopRecording() {
-    // Close data channel
+    startLockRef.current = false
+    stopRequestedRef.current = true  // Mark this as intentional stop
+    
+    // CRITICAL: Nullify refs BEFORE closing to prevent stale handler issues
+    // This ensures any async close events see null and bail out
+    
     if (dataChannelRef.current) {
-      dataChannelRef.current.close()
-      dataChannelRef.current = null
+      const dc = dataChannelRef.current
+      dataChannelRef.current = null  // Nullify first!
+      dc.close()
     }
 
-    // Close peer connection
     if (peerConnectionRef.current) {
-      peerConnectionRef.current.close()
-      peerConnectionRef.current = null
+      const pc = peerConnectionRef.current
+      peerConnectionRef.current = null  // Nullify first!
+      pc.close()
     }
 
-    // Stop media stream
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current = null
@@ -352,16 +414,105 @@ export default function VoiceRecorder() {
 
     clientSecretRef.current = null
     setIsRecording(false)
+    setIsConnecting(false)
   }
 
   return (
     <div>
-      <button onClick={isRecording ? stopRecording : startRealtime}>
-        {isRecording ? 'Stop' : 'Start'} Recording
+      <button 
+        onClick={isRecording ? stopRecording : startRealtime}
+        disabled={isConnecting}
+      >
+        {isConnecting ? 'Connecting...' : isRecording ? 'Stop' : 'Start'} Recording
       </button>
+      {error && <div style={{ color: 'red' }}>{error}</div>}
       <div>Transcript: {transcript}</div>
     </div>
   )
+}
+```
+
+## Critical: Avoiding Stale Event Handler Bugs
+
+### The Problem
+
+WebRTC event handlers (onclose, onmessage, onconnectionstatechange) fire **asynchronously**. If you stop one recording session and start another quickly:
+
+1. Old session's `dataChannel.onclose` might fire AFTER new session starts
+2. The `stopRequestedRef` flag has been reset to `false` for the new session
+3. Old handler sees `stopRequestedRef === false` and thinks it's an unexpected close
+4. Handler sets `isRecording = false`, killing the new session
+
+### The Solution
+
+**Check that the handler belongs to the current connection:**
+
+```typescript
+// ✅ GOOD: Check ref before handling event
+dc.onclose = () => {
+  if (dataChannelRef.current !== dc) {
+    console.log('Ignoring stale data channel close')
+    return  // This is from an old session, ignore it
+  }
+  // Handle actual unexpected close...
+}
+
+// ✅ GOOD: Nullify ref BEFORE closing
+function stopRecording() {
+  if (dataChannelRef.current) {
+    const dc = dataChannelRef.current
+    dataChannelRef.current = null  // Nullify FIRST
+    dc.close()  // Then close (handler will see null and bail)
+  }
+}
+```
+
+```typescript
+// ❌ BAD: Close first, then nullify
+function stopRecording() {
+  if (dataChannelRef.current) {
+    dataChannelRef.current.close()  // Handler fires...
+    dataChannelRef.current = null   // ...but ref isn't null yet!
+  }
+}
+```
+
+### Apply to ALL Event Handlers
+
+```typescript
+pc.onconnectionstatechange = () => {
+  if (peerConnectionRef.current !== pc) return  // Stale check
+  // ...
+}
+
+pc.oniceconnectionstatechange = () => {
+  if (peerConnectionRef.current !== pc) return  // Stale check
+  // ...
+}
+
+pc.ontrack = (e) => {
+  if (peerConnectionRef.current !== pc) return  // Stale check
+  // ...
+}
+
+dc.onopen = () => {
+  if (dataChannelRef.current !== dc) return  // Stale check
+  // ...
+}
+
+dc.onclose = () => {
+  if (dataChannelRef.current !== dc) return  // Stale check
+  // ...
+}
+
+dc.onmessage = (msg) => {
+  if (dataChannelRef.current !== dc) return  // Stale check
+  // ...
+}
+
+dc.onerror = (e) => {
+  if (dataChannelRef.current !== dc) return  // Stale check
+  // ...
 }
 ```
 
@@ -374,19 +525,29 @@ export default function VoiceRecorder() {
 {
   type: 'conversation.item.input_audio_transcription.completed',
   transcript: 'The transcribed text',
-  // ... other fields
 }
 
-// Partial transcript updates
+// Partial transcript updates (assistant speaking)
 {
   type: 'response.audio_transcript.delta',
   delta: 'partial text',
 }
 
-// Final transcript
+// Final transcript (assistant)
 {
   type: 'response.audio_transcript.done',
   transcript: 'Complete transcript',
+}
+
+// Text response (if modalities includes 'text')
+{
+  type: 'response.text.delta',
+  delta: 'partial text',
+}
+
+{
+  type: 'response.text.done',
+  text: 'Complete text',
 }
 ```
 
@@ -396,20 +557,39 @@ export default function VoiceRecorder() {
 // User started speaking
 {
   type: 'input_audio_buffer.speech_started',
+  audio_start_ms: 1234,
 }
 
 // User stopped speaking
 {
   type: 'input_audio_buffer.speech_stopped',
+  audio_end_ms: 5678,
+}
+
+// Audio buffer committed (after speech ends)
+{
+  type: 'input_audio_buffer.committed',
+}
+
+// Idle timeout (no speech for idle_timeout_ms)
+{
+  type: 'input_audio_buffer.timeout_triggered',
 }
 ```
 
 ### Session Events
 
 ```typescript
+// Session created
+{
+  type: 'session.created',
+  session: { /* session config */ },
+}
+
 // Session configured successfully
 {
   type: 'session.updated',
+  session: { /* updated config */ },
 }
 
 // Errors
@@ -421,6 +601,37 @@ export default function VoiceRecorder() {
   },
 }
 ```
+
+## Session Configuration Options
+
+### Modalities
+
+```typescript
+// Text-only (transcription only, no speech output)
+modalities: ['text']
+
+// Audio-only (speech-to-speech, no text)
+modalities: ['audio']
+
+// Both (two-way conversation with transcripts)
+modalities: ['text', 'audio']
+```
+
+### Turn Detection
+
+```typescript
+turn_detection: {
+  type: 'server_vad',           // Server-side voice activity detection
+  threshold: 0.5,               // Sensitivity (0.0 to 1.0)
+  prefix_padding_ms: 300,       // Audio to include before detected speech
+  silence_duration_ms: 500,     // Silence duration to end turn
+  idle_timeout_ms: 30000,       // Timeout after assistant response
+}
+```
+
+### Voice Options
+
+Available voices: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`
 
 ## Environment Variables
 
@@ -443,86 +654,72 @@ NEXT_PUBLIC_OPENAI_API_KEY=sk-...  # ❌ BAD
 NEXT_PUBLIC_YOUR_API_KEY=...       # ❌ BAD
 ```
 
-## Best Practices
+## Common Pitfalls
 
-### 1. Token TTL
-
-- **Recommended**: 300 seconds (5 minutes)
-- **Minimum**: 60 seconds
-- **Maximum**: 600 seconds (10 minutes)
-- **Why**: Balance between security and user experience
-
-### 2. Rate Limiting
+### ❌ Pitfall 1: Stale Event Handlers (Most Common Bug!)
 
 ```typescript
-// Example: 10 tokens per minute per user
-const rateLimits = {
-  tokensPerMinute: 10,
-  tokensPerHour: 100,
-}
-```
-
-### 3. Error Handling
-
-```typescript
-// Handle WebRTC connection errors
-pc.oniceconnectionstatechange = () => {
-  if (pc.iceConnectionState === 'failed') {
-    // Reconnect or show error
-    console.error('WebRTC connection failed')
+// ❌ BAD: No stale check - old sessions can corrupt new ones
+dc.onclose = () => {
+  if (!stopRequestedRef.current) {
+    setIsRecording(false)  // Might kill a new session!
   }
 }
 
-// Handle data channel errors
-dc.onerror = (error) => {
-  console.error('Data channel error:', error)
+// ✅ GOOD: Check that this is still the current data channel
+dc.onclose = () => {
+  if (dataChannelRef.current !== dc) return  // Ignore stale
+  if (!stopRequestedRef.current) {
+    setIsRecording(false)
+  }
 }
 ```
 
-### 4. Cleanup
-
-Always clean up resources:
+### ❌ Pitfall 2: Wrong Cleanup Order
 
 ```typescript
-function cleanup() {
-  // Close data channel
-  dataChannelRef.current?.close()
-  
-  // Close peer connection
-  peerConnectionRef.current?.close()
-  
-  // Stop media tracks
-  mediaStreamRef.current?.getTracks().forEach(track => track.stop())
-}
+// ❌ BAD: Nullify after close - handler fires before null check
+dataChannelRef.current.close()
+dataChannelRef.current = null
+
+// ✅ GOOD: Nullify before close - handler sees null immediately
+const dc = dataChannelRef.current
+dataChannelRef.current = null
+dc.close()
 ```
 
-## Common Pitfalls
-
-### ❌ Pitfall 1: Exposing API Keys
+### ❌ Pitfall 3: Missing Model in Session Creation
 
 ```typescript
-// ❌ BAD: API key in client code
-const openai = new OpenAI({ 
-  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY // ❌ Exposed!
+// ❌ BAD: No model specified - will return 400 or empty model
+await fetch('https://api.openai.com/v1/realtime/sessions', {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${apiKey}` },
 })
 
-// ✅ GOOD: Use ephemeral tokens
-const tokenResp = await fetch('/api/realtime-token')
-const { client_secret } = await tokenResp.json()
+// ✅ GOOD: Specify model in request body
+await fetch('https://api.openai.com/v1/realtime/sessions', {
+  method: 'POST',
+  headers: { 
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ model: 'gpt-realtime-mini' }),
+})
 ```
 
-### ❌ Pitfall 2: Wrong Endpoint
+### ❌ Pitfall 4: Wrong Endpoint
 
 ```typescript
-// ❌ BAD: Wrong endpoints
+// ❌ BAD: These endpoints may not exist or have different behavior
 fetch('https://api.openai.com/v1/realtime/ephemeral_keys', ...)
-fetch('https://api.openai.com/v1/realtime/client_secrets', ...) // May not exist
+fetch('https://api.openai.com/v1/realtime/client_secrets', ...)
 
-// ✅ GOOD: Correct endpoint (based on official OpenAI realtime-agents repo)
+// ✅ GOOD: Use the sessions endpoint
 fetch('https://api.openai.com/v1/realtime/sessions', ...)
 ```
 
-### ❌ Pitfall 3: Wrong Data Channel Name
+### ❌ Pitfall 5: Wrong Data Channel Name
 
 ```typescript
 // ❌ BAD: Custom channel name
@@ -532,30 +729,59 @@ const dc = pc.createDataChannel('my-events', ...)
 const dc = pc.createDataChannel('oai-events', ...)
 ```
 
-### ❌ Pitfall 4: Wrong Audio Format
+### ❌ Pitfall 6: Wrong Audio Format
 
 ```typescript
 // ❌ BAD: Wrong sample rate
 const stream = await getUserMedia({ 
-  audio: { sampleRate: 44100 } // ❌ Wrong
+  audio: { sampleRate: 44100 }
 })
 
 // ✅ GOOD: 24kHz required
 const stream = await getUserMedia({ 
   audio: { 
-    sampleRate: 24000, // ✅ Correct
+    sampleRate: 24000,
     channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
   }
 })
+```
+
+### ❌ Pitfall 7: Double-Start on Mobile
+
+```typescript
+// ❌ BAD: No lock - mobile touch events can fire multiple times
+async function startRecording() {
+  if (isRecording) return
+  // ... user taps twice quickly, two sessions start
+}
+
+// ✅ GOOD: Use a ref-based lock
+const startLockRef = useRef(false)
+
+async function startRecording() {
+  if (startLockRef.current) return
+  startLockRef.current = true
+  try {
+    // ... start session
+  } finally {
+    startLockRef.current = false
+  }
+}
 ```
 
 ## Testing Checklist
 
 - [ ] API key is never in `NEXT_PUBLIC_*` variables
-- [ ] Ephemeral token endpoint requires authentication
-- [ ] Rate limiting is implemented
+- [ ] Ephemeral token endpoint requires authentication (in production)
+- [ ] Rate limiting is implemented (in production)
+- [ ] Model is specified in session creation request body
 - [ ] WebRTC connection establishes successfully
 - [ ] Data channel `'oai-events'` is created
+- [ ] All event handlers have stale checks
+- [ ] Cleanup nullifies refs before closing
+- [ ] Start has a lock to prevent double-triggering
 - [ ] Transcription events are received
 - [ ] Audio format is 24kHz, mono
 - [ ] Resources are cleaned up on disconnect
@@ -578,6 +804,7 @@ OPENAI_API_KEY=sk-...
 Monitor:
 - Token generation rate
 - WebRTC connection success rate
+- Data channel open/close events
 - Transcription accuracy
 - API costs
 
@@ -585,9 +812,9 @@ Monitor:
 
 - [OpenAI Realtime API Documentation](https://platform.openai.com/docs/guides/realtime)
 - [OpenAI Realtime WebRTC Guide](https://platform.openai.com/docs/guides/realtime-webrtc)
+- [OpenAI Realtime Agents Example](https://github.com/openai/openai-realtime-agents)
 - [WebRTC API Reference](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API)
 
 ## License
 
 This guide is part of the JobDiary project. See LICENSE file for details.
-
