@@ -281,17 +281,17 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <h2 className="text-xl font-semibold mb-4">
-        Voice Diary Entry (OpenAI Realtime WebRTC)
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-200 dark:border-gray-700">
+      <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+        Voice Diary Entry
       </h2>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-800 text-sm">{error}</p>
+        <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <p className="text-red-800 dark:text-red-200 text-sm">{error}</p>
           <button
             onClick={() => setError(null)}
-            className="mt-2 text-xs text-red-600 hover:text-red-800 underline"
+            className="mt-2 text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 underline"
           >
             Dismiss
           </button>
@@ -308,15 +308,15 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
               transition-all duration-200
               ${
                 isRecording
-                  ? 'bg-red-500 hover:bg-red-600 animate-pulse'
-                  : 'bg-primary-500 hover:bg-primary-600'
+                  ? 'bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 animate-pulse'
+                  : 'bg-primary-500 hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-700'
               }
               ${
                 disabled || isProcessing || isConnecting
                   ? 'opacity-50 cursor-not-allowed'
-                  : ''
+                  : 'hover:scale-105 active:scale-95'
               }
-              text-white shadow-lg
+              text-white shadow-lg dark:shadow-xl
             `}
           >
             {isConnecting ? (
@@ -340,24 +340,27 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
                 ></path>
               </svg>
             ) : isRecording ? (
+              // Stop icon (square)
               <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
                 <rect x="6" y="6" width="8" height="8" rx="1" />
               </svg>
             ) : (
+              // Microphone icon
               <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" />
+                <path d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4z" />
+                <path d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z" />
               </svg>
             )}
           </button>
         </div>
 
         {isConnecting && (
-          <p className="text-center text-blue-600 font-medium">
+          <p className="text-center text-blue-600 dark:text-blue-400 font-medium">
             Connecting to OpenAI Realtime API via WebRTC...
           </p>
         )}
         {isRecording && !isConnecting && (
-          <p className="text-center text-red-600 font-medium animate-pulse">
+          <p className="text-center text-red-600 dark:text-red-400 font-medium animate-pulse">
             Recording... Speak now
           </p>
         )}
@@ -368,11 +371,16 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
           placeholder="Your voice transcript will appear here in real-time, or type manually..."
-          className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+          className="w-full h-32 p-3 border border-gray-300 dark:border-gray-600 rounded-lg resize-none 
+                     bg-white dark:bg-gray-700 
+                     text-gray-900 dark:text-gray-100
+                     placeholder-gray-400 dark:placeholder-gray-500
+                     focus:ring-2 focus:ring-primary-500 focus:border-transparent
+                     disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={isProcessing}
         />
         {transcript && (
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {transcript.split(' ').length} words
           </p>
         )}
@@ -382,13 +390,13 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
         <button
           onClick={handleSubmit}
           disabled={!transcript.trim() || disabled || isProcessing}
-          className={`
+            className={`
             flex-1 px-4 py-2 rounded-lg font-medium
             transition-colors
             ${
               transcript.trim() && !disabled && !isProcessing
-                ? 'bg-primary-600 hover:bg-primary-700 text-white'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                ? 'bg-primary-600 hover:bg-primary-700 dark:bg-primary-600 dark:hover:bg-primary-700 text-white shadow-md hover:shadow-lg'
+                : 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
             }
           `}
         >
@@ -402,7 +410,9 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
               accumulatedTranscriptRef.current = ''
             }}
             disabled={disabled || isProcessing}
-            className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg font-medium transition-colors disabled:opacity-50"
+            className="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 
+                       text-gray-700 dark:text-gray-200 rounded-lg font-medium transition-colors 
+                       disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Clear
           </button>

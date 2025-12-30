@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import VoiceRecorder from '@/components/VoiceRecorder'
 import JobList from '@/components/JobList'
 import EntryList from '@/components/EntryList'
+import ThemeToggle from '@/components/ThemeToggle'
 import { getJobs, createJob, createEntry } from '@/lib/api'
 
 export default function Home() {
@@ -102,13 +103,16 @@ export default function Home() {
 
   return (
     <main className="container mx-auto px-4 py-8 max-w-6xl">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">
-          JobDiary
-        </h1>
-        <p className="text-gray-600">
-          Voice-powered job diary for tradies
-        </p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
+            JobDiary
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400">
+            Voice-powered job diary for tradies
+          </p>
+        </div>
+        <ThemeToggle />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
