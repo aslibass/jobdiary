@@ -221,53 +221,37 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         }))
       }
 
-      // Step 5: Create SDP offer and set local description FIRST
-      // Then wait for ICE gathering before sending to OpenAI
-      // Wait for ICE gathering to complete for better SDP
-      const offer = await new Promise<RTCSessionDescriptionInit>((resolve, reject) => {
-        pc.onicegatheringstatechange = () => {
-          if (pc.iceGatheringState === 'complete') {
-            resolve(pc.localDescription!)
-          }
-        }
-        pc.createOffer()
-          .then(offer => pc.setLocalDescription(offer))
-          .then(() => {
-            // If ICE gathering is already complete, resolve immediately
-            if (pc.iceGatheringState === 'complete') {
-              resolve(pc.localDescription!)
-            }
-            // Otherwise wait for onicegatheringstatechange
-            // Set a timeout to avoid waiting forever
-            setTimeout(() => {
-              if (pc.localDescription) {
-                resolve(pc.localDescription)
-              } else {
-                reject(new Error('Failed to create SDP offer'))
-              }
-            }, 5000)
-          })
-          .catch(reject)
+      // Step 5: Create SDP offer
+      // Based on official pattern: create offer, set local description, send immediately
+      // Don't wait for ICE gathering - OpenAI will handle it
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false,
       })
+      await pc.setLocalDescription(offer)
+      
+      // Note: We don't wait for ICE gathering here
+      // The SDP will be updated automatically as ICE candidates are gathered
+      // OpenAI's endpoint can handle incomplete SDP offers
 
       // Step 6: Send SDP offer to OpenAI Realtime API
       if (!ephemeralTokenRef.current) {
         throw new Error('Ephemeral token is missing. Please try again.')
       }
       
-      if (!finalOffer.sdp) {
+      if (!offer.sdp) {
         throw new Error('SDP offer is missing')
       }
       
       console.log('Creating WebRTC call with ephemeral token...')
-      console.log('SDP offer length:', finalOffer.sdp.length)
-      console.log('SDP offer first line:', finalOffer.sdp.split('\n')[0])
+      console.log('SDP offer length:', offer.sdp.length)
+      console.log('SDP offer first line:', offer.sdp.split('\n')[0])
       console.log('ICE gathering state:', pc.iceGatheringState)
       console.log('Using token:', ephemeralTokenRef.current.substring(0, 10) + '...')
       
       // OpenAI Realtime API WebRTC call creation
       // The endpoint expects the SDP offer in the body with Content-Type: application/sdp
-      // Based on official docs, we use /v1/realtime/calls with the ephemeral token
+      // Based on official pattern: send SDP immediately after setting local description
       const callUrl = 'https://api.openai.com/v1/realtime/calls'
       
       const sdpResponse = await fetch(callUrl, {
@@ -276,7 +260,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
           'Authorization': `Bearer ${ephemeralTokenRef.current}`,
           'Content-Type': 'application/sdp',
         },
-        body: finalOffer.sdp,
+        body: offer.sdp,
       })
 
       if (!sdpResponse.ok) {
