@@ -226,6 +226,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       }
       
       console.log('Creating WebRTC call with ephemeral token...')
+      console.log('SDP offer length:', offer.sdp?.length || 0)
+      
       const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
         headers: {
@@ -237,7 +239,18 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
 
       if (!sdpResponse.ok) {
         const errorText = await sdpResponse.text()
-        throw new Error(`Failed to create call: ${errorText}`)
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+        } catch {
+          errorData = { message: errorText }
+        }
+        console.error('Failed to create call:', {
+          status: sdpResponse.status,
+          statusText: sdpResponse.statusText,
+          error: errorData
+        })
+        throw new Error(`Failed to create call: ${errorData.error?.message || errorData.message || errorText}`)
       }
 
       // Step 7: Set SDP answer as remote description

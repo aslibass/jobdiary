@@ -47,26 +47,29 @@ export async function POST(request: NextRequest) {
     console.log('OpenAI sessions response:', JSON.stringify(data, null, 2))
     
     // OpenAI sessions endpoint returns ephemeral session token
-    // The response format can vary - handle multiple possible structures
+    // Based on the actual response, client_secret is an object with a "value" property:
+    // { client_secret: { value: "ek_...", expires_at: 1234567890 } }
     let clientSecret: string | null = null
     
     // Try different possible response formats
     if (typeof data === 'string') {
       clientSecret = data
     } else if (typeof data.client_secret === 'string') {
+      // Direct string (unlikely but possible)
       clientSecret = data.client_secret
     } else if (data.client_secret && typeof data.client_secret === 'object') {
-      // If client_secret is an object, try to extract the actual secret
-      clientSecret = data.client_secret.client_secret || 
+      // Most common case: client_secret is an object with "value" property
+      clientSecret = data.client_secret.value || 
+                    data.client_secret.client_secret || 
                     data.client_secret.secret || 
                     data.client_secret.token ||
-                    data.client_secret.value ||
                     null
     } else if (data.session?.client_secret) {
       if (typeof data.session.client_secret === 'string') {
         clientSecret = data.session.client_secret
       } else if (typeof data.session.client_secret === 'object') {
-        clientSecret = data.session.client_secret.client_secret || 
+        clientSecret = data.session.client_secret.value ||
+                      data.session.client_secret.client_secret || 
                       data.session.client_secret.secret || 
                       data.session.client_secret.token ||
                       null
