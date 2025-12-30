@@ -8,19 +8,29 @@ interface VoiceRecorderProps {
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void
 }
 
+type ChatRole = 'user' | 'assistant' | 'system'
+type ChatMessage = {
+  id: string
+  role: ChatRole
+  text: string
+  ts: number
+}
+
 export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
+  // Draft that will be saved to JobDiary (separate from assistant messages)
   const [transcript, setTranscript] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const dataChannelRef = useRef<RTCDataChannel | null>(null)
-  const accumulatedTranscriptRef = useRef<string>('')
+  const accumulatedTranscriptRef = useRef<string>('') // draft buffer
   const ephemeralTokenRef = useRef<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const recordingStartTimeRef = useRef<number | null>(null)
@@ -28,6 +38,41 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
+  const assistantStreamingRef = useRef<boolean>(false)
+
+  const appendMessage = (role: ChatRole, text: string) => {
+    const id = `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    setMessages((prev) => [...prev, { id, role, text, ts: Date.now() }])
+  }
+
+  const appendAssistantDelta = (delta: string) => {
+    setMessages((prev) => {
+      if (prev.length === 0) {
+        return [{ id: `assistant-${Date.now()}`, role: 'assistant', text: delta, ts: Date.now() }]
+      }
+      const last = prev[prev.length - 1]
+      if (last.role === 'assistant' && assistantStreamingRef.current) {
+        const updated = { ...last, text: last.text + delta }
+        return [...prev.slice(0, -1), updated]
+      }
+      assistantStreamingRef.current = true
+      return [...prev, { id: `assistant-${Date.now()}`, role: 'assistant', text: delta, ts: Date.now() }]
+    })
+  }
+
+  const finalizeAssistant = (finalText?: string) => {
+    assistantStreamingRef.current = false
+    if (!finalText) return
+    setMessages((prev) => {
+      if (prev.length === 0) return [{ id: `assistant-${Date.now()}`, role: 'assistant', text: finalText, ts: Date.now() }]
+      const last = prev[prev.length - 1]
+      if (last.role === 'assistant') {
+        return [...prev.slice(0, -1), { ...last, text: finalText }]
+      }
+      return [...prev, { id: `assistant-${Date.now()}`, role: 'assistant', text: finalText, ts: Date.now() }]
+    })
+  }
 
   useEffect(() => {
     // Load draft from localStorage on mount
@@ -59,12 +104,19 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
     }
   }, [onToast])
 
+  const isSaveCommand = (text: string) => {
+    return /\b(save it|save this|save entry|save now|save that)\b/i.test(text)
+  }
+
   const startRecording = async () => {
     if (isRecording || disabled) return
 
     setError(null)
     setIsConnecting(true)
     accumulatedTranscriptRef.current = ''
+    assistantStreamingRef.current = false
+    setMessages([])
+    appendMessage('system', "Say your update naturally. When you're ready, say “save it” to save to the job.")
 
     try {
       // Step 1: Get ephemeral token from our server
@@ -137,6 +189,16 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       })
       peerConnectionRef.current = pc
 
+      // Play assistant audio back to user (speech-to-speech)
+      pc.ontrack = (e) => {
+        const stream = e.streams?.[0]
+        if (stream && audioPlayerRef.current) {
+          audioPlayerRef.current.srcObject = stream
+          // Autoplay may be blocked until user gesture; best effort.
+          audioPlayerRef.current.play().catch(() => {})
+        }
+      }
+
       // Add audio track
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream)
@@ -155,35 +217,40 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
           if (data.type === 'conversation.item.input_audio_transcription.completed') {
             const newText = data.transcript
             if (newText) {
+              // Add to visible conversation as USER
+              appendMessage('user', newText)
+
+              // Voice command: "save it" triggers saving the current draft
+              if (isSaveCommand(newText)) {
+                onToast?.('Saving entry…', 'info')
+                // Do not add the save command itself to the draft.
+                // Save current draft (if any).
+                if (accumulatedTranscriptRef.current.trim()) {
+                  handleSubmit()
+                } else {
+                  onToast?.('Nothing to save yet. Say your update first.', 'error')
+                }
+                return
+              }
+
+              // Otherwise accumulate into the draft-to-save
               accumulatedTranscriptRef.current += newText + ' '
               setTranscript(accumulatedTranscriptRef.current.trim())
             }
           } else if (data.type === 'response.text.delta') {
-            // Some sessions stream transcript as response text deltas
+            // Assistant text stream (we show it in the conversation)
             const delta = data.delta
             if (delta) {
-              accumulatedTranscriptRef.current += delta
-              setTranscript(accumulatedTranscriptRef.current.trim())
+              appendAssistantDelta(delta)
             }
           } else if (data.type === 'response.text.done') {
-            // Final text (if provided)
-            const final = data.text
-            if (final) {
-              accumulatedTranscriptRef.current = final
-              setTranscript(final)
-            }
+            finalizeAssistant(data.text)
           } else if (data.type === 'response.audio_transcript.delta') {
+            // Some implementations emit assistant transcript here; show it as assistant text
             const delta = data.delta
-            if (delta) {
-              accumulatedTranscriptRef.current += delta
-              setTranscript(accumulatedTranscriptRef.current.trim())
-            }
+            if (delta) appendAssistantDelta(delta)
           } else if (data.type === 'response.audio_transcript.done') {
-            const final = data.transcript
-            if (final) {
-              accumulatedTranscriptRef.current = final
-              setTranscript(final)
-            }
+            finalizeAssistant(data.transcript)
           } else if (data.type === 'input_audio_buffer.timeout_triggered') {
             // Idle timeout triggered - user hasn't spoken for idle_timeout_ms
             // This commits an empty audio segment and prompts the model to respond
@@ -209,13 +276,16 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       dataChannel.onopen = () => {
         console.log('Data channel opened')
         // Configure session via data channel
-        // Using gpt-realtime-mini model with whisper-1 for transcription
+        // Enable two-way conversation:
+        // - modalities: audio + text (assistant can speak back and also send text)
+        // - whisper-1 transcription for user input
         dataChannel.send(JSON.stringify({
           type: 'session.update',
           session: {
             model: 'gpt-realtime-mini', // Use gpt-realtime-mini for cost efficiency
-            modalities: ['text'], // or ['text', 'audio'] for speech-to-speech
-            instructions: 'You are a transcription assistant for a job diary app. Transcribe the user\'s speech accurately. Only provide the transcript, no commentary.',
+            modalities: ['text', 'audio'],
+            instructions:
+              "You are JobDiary, a voice assistant for tradies. Have a natural conversation to collect the user's end-of-day job update. Ask short, practical follow-up questions one at a time. Keep it concise. When the user says 'save it' (or similar), stop asking questions and respond with a brief confirmation like 'Saving it now.' Do not mention tools or APIs.",
             voice: 'alloy', // Options: alloy, echo, fable, onyx, nova, shimmer
             input_audio_format: 'pcm16',
             output_audio_format: 'pcm16',
@@ -411,6 +481,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       localStorage.removeItem('jobdiary_draft')
       
       onToast?.('Entry saved successfully!', 'success')
+      appendMessage('assistant', 'Saved. Want to add anything else?')
     } catch (error) {
       console.error('Submit error:', error)
       const errorMessage = error instanceof Error ? error.message : 'Failed to save entry. Please try again.'
@@ -558,8 +629,11 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-200 dark:border-gray-700">
       <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-        Voice Diary Entry
+        Voice Conversation
       </h2>
+
+      {/* Assistant audio playback (speech-to-speech) */}
+      <audio ref={audioPlayerRef} autoPlay playsInline className="hidden" />
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -641,11 +715,49 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         )}
       </div>
 
+      {/* Conversation transcript */}
       <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Conversation</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Tip: say “save it” to save</p>
+        </div>
+        <div className="h-44 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-3 space-y-2">
+          {messages.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Press the mic and talk like you normally would. The assistant will ask quick follow-ups.
+            </p>
+          ) : (
+            messages.map((m) => (
+              <div key={m.id} className="text-sm">
+                <span
+                  className={
+                    m.role === 'user'
+                      ? 'font-semibold text-gray-900 dark:text-white'
+                      : m.role === 'assistant'
+                      ? 'font-semibold text-primary-700 dark:text-primary-300'
+                      : 'font-semibold text-gray-600 dark:text-gray-400'
+                  }
+                >
+                  {m.role === 'user' ? 'You' : m.role === 'assistant' ? 'JobDiary' : 'System'}:{' '}
+                </span>
+                <span className="text-gray-800 dark:text-gray-200">{m.text}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Draft to save</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            This is what will be saved to the selected job.
+          </p>
+        </div>
         <textarea
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
-          placeholder="Your voice transcript will appear here in real-time, or type manually..."
+          placeholder="Your job notes build up here as you talk. You can also type edits. Say “save it” to save."
           className="w-full h-32 p-3 border border-gray-300 dark:border-gray-600 rounded-lg resize-none 
                      bg-white dark:bg-gray-700 
                      text-gray-900 dark:text-gray-100
