@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from 'react'
 interface VoiceRecorderProps {
   onSubmit: (transcript: string, extracted?: any) => void
   disabled?: boolean
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void
 }
 
 export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceRecorderProps) {
