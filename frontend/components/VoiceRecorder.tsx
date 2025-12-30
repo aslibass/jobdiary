@@ -217,16 +217,45 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       }
 
       // Step 5: Create SDP offer
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
+      // Wait for ICE gathering to complete for better SDP
+      const offer = await new Promise<RTCSessionDescriptionInit>((resolve, reject) => {
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete') {
+            resolve(pc.localDescription!)
+          }
+        }
+        pc.createOffer()
+          .then(offer => pc.setLocalDescription(offer))
+          .then(() => {
+            // If ICE gathering is already complete, resolve immediately
+            if (pc.iceGatheringState === 'complete') {
+              resolve(pc.localDescription!)
+            }
+            // Otherwise wait for onicegatheringstatechange
+            // Set a timeout to avoid waiting forever
+            setTimeout(() => {
+              if (pc.localDescription) {
+                resolve(pc.localDescription)
+              } else {
+                reject(new Error('Failed to create SDP offer'))
+              }
+            }, 5000)
+          })
+          .catch(reject)
+      })
 
       // Step 6: Send SDP offer to OpenAI Realtime API
       if (!ephemeralTokenRef.current) {
         throw new Error('Ephemeral token is missing. Please try again.')
       }
       
+      if (!offer.sdp) {
+        throw new Error('SDP offer is missing')
+      }
+      
       console.log('Creating WebRTC call with ephemeral token...')
-      console.log('SDP offer length:', offer.sdp?.length || 0)
+      console.log('SDP offer length:', offer.sdp.length)
+      console.log('SDP offer preview:', offer.sdp.substring(0, 100))
       
       const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
@@ -248,9 +277,11 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         console.error('Failed to create call:', {
           status: sdpResponse.status,
           statusText: sdpResponse.statusText,
-          error: errorData
+          headers: Object.fromEntries(sdpResponse.headers.entries()),
+          error: errorData,
+          errorText: errorText
         })
-        throw new Error(`Failed to create call: ${errorData.error?.message || errorData.message || errorText}`)
+        throw new Error(`Failed to create call (${sdpResponse.status}): ${errorData.error?.message || errorData.message || errorText}`)
       }
 
       // Step 7: Set SDP answer as remote description
