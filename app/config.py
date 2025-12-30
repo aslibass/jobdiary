@@ -1,5 +1,6 @@
 """Configuration management for the JobDiary API."""
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from typing import Optional
 from urllib.parse import urlparse
@@ -36,7 +37,9 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # Database
-    database_url: str
+    # Prefer Railway's internal DATABASE_URL in production.
+    # Allow DATABASE_PUBLIC_URL for local dev connecting to Railway DB.
+    database_url: str = Field(validation_alias=AliasChoices("DATABASE_URL", "DATABASE_PUBLIC_URL"))
     
     # Security
     api_key: str

@@ -75,6 +75,8 @@ A FastAPI-based conversational job diary API for tradies. This service stores en
    Create a `.env` file in the root directory:
 
    ```env
+   # Use DATABASE_URL for local Postgres.
+   # If you want to connect from your laptop to Railway Postgres, Railway often provides DATABASE_PUBLIC_URL.
    DATABASE_URL=postgresql://user:password@localhost:5432/jobdiary
    API_KEY=your-secret-api-key-123
    ENV=dev
@@ -301,7 +303,8 @@ Key points for GPT Actions:
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `DATABASE_URL` | Yes | PostgreSQL connection string | - |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (or use `DATABASE_PUBLIC_URL`) | - |
+| `DATABASE_PUBLIC_URL` | No | Alternate DB URL (useful for local dev connecting to Railway) | - |
 | `API_KEY` | Yes | API key for authentication | - |
 | `ENV` | No | Environment (dev/prod) | `dev` |
 | `CORS_ORIGINS` | No | CORS allowed origins | `*` |
