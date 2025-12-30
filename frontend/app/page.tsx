@@ -6,9 +6,9 @@ import JobList from '@/components/JobList'
 import EntryList from '@/components/EntryList'
 import ThemeToggle from '@/components/ThemeToggle'
 import Toast from '@/components/Toast'
+import type { VoiceCommand } from '@/lib/voiceCommands'
 import {
   getJobs,
-  getJob,
   getEntries,
   createJob,
   createEntry,
@@ -104,16 +104,6 @@ export default function Home() {
     setToast({ message, type })
   }
 
-  type VoiceCommand =
-    | { type: 'list_jobs' }
-    | { type: 'create_job'; name: string }
-    | { type: 'select_job'; query: string }
-    | { type: 'mark_job_status'; status: 'quoted' | 'in_progress' | 'complete' | 'on_hold' }
-    | { type: 'search_entries'; query: string }
-    | { type: 'show_entries' }
-    | { type: 'set_job_stage'; stage: string }
-    | { type: 'save_debrief'; transcript: string }
-
   const handleVoiceCommand = async (cmd: VoiceCommand) => {
     switch (cmd.type) {
       case 'list_jobs': {
@@ -193,6 +183,10 @@ export default function Home() {
         await loadJobs()
         await loadEntries(selectedJob)
         handleToast('Debrief saved', 'success')
+        return
+      }
+      case 'save_entry': {
+        // VoiceRecorder handles save_entry locally by calling onSubmit (so we keep this for type completeness)
         return
       }
       default:

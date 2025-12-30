@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import type { VoiceCommand } from '@/lib/voiceCommands'
 
 interface VoiceRecorderProps {
   onSubmit: (transcript: string, extracted?: any) => void
@@ -16,17 +17,6 @@ type ChatMessage = {
   text: string
   ts: number
 }
-
-type VoiceCommand =
-  | { type: 'list_jobs' }
-  | { type: 'create_job'; name: string }
-  | { type: 'select_job'; query: string }
-  | { type: 'mark_job_status'; status: 'quoted' | 'in_progress' | 'complete' | 'on_hold' }
-  | { type: 'search_entries'; query: string }
-  | { type: 'show_entries' }
-  | { type: 'set_job_stage'; stage: string }
-  | { type: 'save_entry' }
-  | { type: 'save_debrief'; transcript: string }
 
 export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
