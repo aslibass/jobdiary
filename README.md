@@ -333,6 +333,13 @@ alembic downgrade -1
 - `app/auth.py`: Authentication middleware
 - `app/config.py`: Configuration management
 
+## Documentation
+
+- **[User Guide](./docs/user-guide.md)**: Complete guide for end users
+- **[Quick Start Guide](./docs/quick-start.md)**: Get started in 2 minutes
+- **[OpenAI Realtime API Guide](./docs/openai-realtime-webrtc-guide.md)**: Technical implementation details
+- **[UX Review](./docs/ux-review-tradie-painter.md)**: UX analysis from tradie perspective
+
 ## License
 
 Copyright (c) 2025 Viren Joseph. All rights reserved.
