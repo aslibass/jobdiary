@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import OpenAI from 'openai'
 
 interface VoiceRecorderProps {
   onSubmit: (transcript: string, extracted?: any) => void
@@ -11,68 +12,208 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const [isSupported, setIsSupported] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isConnecting, setIsConnecting] = useState(false)
+  
+  const socketRef = useRef<WebSocket | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
+  const accumulatedTranscriptRef = useRef<string>('')
 
   useEffect(() => {
-    // Check for browser support
-    const SpeechRecognition = 
-      (window as any).SpeechRecognition || 
-      (window as any).webkitSpeechRecognition
-
-    if (SpeechRecognition) {
-      setIsSupported(true)
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = 'en-US'
-
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        let interimTranscript = ''
-        let finalTranscript = ''
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript + ' '
-          } else {
-            interimTranscript += transcript
-          }
-        }
-
-        setTranscript(finalTranscript + interimTranscript)
-      }
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error)
-        if (event.error === 'no-speech') {
-          // User stopped speaking, keep transcript
-        } else {
-          setIsRecording(false)
-        }
-      }
-
-      recognition.onend = () => {
-        setIsRecording(false)
-      }
-
-      recognitionRef.current = recognition
+    return () => {
+      // Cleanup on unmount
+      stopRecording()
     }
   }, [])
 
-  const startRecording = () => {
-    if (recognitionRef.current && !isRecording) {
-      setTranscript('')
-      setIsRecording(true)
-      recognitionRef.current.start()
+  const getOpenAIClient = () => {
+    const apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY
+    if (!apiKey) {
+      throw new Error('OpenAI API key not configured. Set NEXT_PUBLIC_OPENAI_API_KEY')
+    }
+    return new OpenAI({ apiKey, dangerouslyAllowBrowser: true })
+  }
+
+  const startRecording = async () => {
+    if (isRecording || disabled) return
+
+    setError(null)
+    setIsConnecting(true)
+    accumulatedTranscriptRef.current = ''
+
+    try {
+      const openai = getOpenAIClient()
+
+      // Create Realtime API session
+      const response = await fetch('https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          voice: 'alloy',
+          instructions: 'You are a helpful assistant for a job diary app. Transcribe the user\'s voice accurately. When the user finishes speaking, provide a clear transcript.',
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500,
+          },
+          modalities: ['text', 'audio'],
+          temperature: 0.8,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to create session' }))
+        throw new Error(errorData.error?.message || 'Failed to connect to OpenAI Realtime API')
+      }
+
+      const sessionData = await response.json()
+      sessionIdRef.current = sessionData.id
+
+      // Get user's microphone
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          channelCount: 1,
+          sampleRate: 24000,
+          echoCancellation: true,
+          noiseSuppression: true,
+        }
+      })
+      mediaStreamRef.current = stream
+
+      // Create audio context for processing
+      const audioContext = new AudioContext({ sampleRate: 24000 })
+      audioContextRef.current = audioContext
+
+      const source = audioContext.createMediaStreamSource(stream)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1)
+
+      processor.onaudioprocess = async (e) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return
+
+        const inputData = e.inputBuffer.getChannelData(0)
+        const pcm16 = new Int16Array(inputData.length)
+        
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]))
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+        }
+
+        // Send audio to OpenAI via WebSocket
+        const audioMessage = {
+          type: 'input_audio_buffer.append',
+          audio: Array.from(pcm16).map(s => s.toString(36)).join(''),
+        }
+
+        socketRef.current.send(JSON.stringify(audioMessage))
+      }
+
+      source.connect(processor)
+      processor.connect(audioContext.destination)
+
+      // Connect WebSocket for real-time communication
+      const wsUrl = `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17`
+      const ws = new WebSocket(wsUrl, [], {
+        headers: {
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}`,
+        },
+      } as any)
+
+      socketRef.current = ws
+
+      ws.onopen = () => {
+        setIsConnecting(false)
+        setIsRecording(true)
+        setTranscript('')
+        
+        // Start the session
+        ws.send(JSON.stringify({
+          type: 'session.update',
+          session: {
+            modalities: ['text', 'audio'],
+            instructions: 'Transcribe the user\'s voice accurately for a job diary entry.',
+            voice: 'alloy',
+            input_audio_format: 'pcm16',
+            output_audio_format: 'pcm16',
+          },
+        }))
+
+        // Request input audio start
+        ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
+      }
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+
+        if (data.type === 'conversation.item.input_audio_transcription.completed') {
+          const newText = data.transcript
+          accumulatedTranscriptRef.current += newText + ' '
+          setTranscript(accumulatedTranscriptRef.current.trim())
+        } else if (data.type === 'response.audio_transcript.delta') {
+          // Handle partial transcripts
+          const delta = data.delta
+          accumulatedTranscriptRef.current += delta
+          setTranscript(accumulatedTranscriptRef.current.trim())
+        } else if (data.type === 'response.audio_transcript.done') {
+          // Final transcript
+          const final = data.transcript
+          accumulatedTranscriptRef.current = final
+          setTranscript(final)
+        } else if (data.type === 'error') {
+          setError(data.error?.message || 'An error occurred')
+          stopRecording()
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        setError('Connection error. Please try again.')
+        stopRecording()
+      }
+
+      ws.onclose = () => {
+        setIsRecording(false)
+        setIsConnecting(false)
+      }
+
+    } catch (err: any) {
+      console.error('Failed to start recording:', err)
+      setError(err.message || 'Failed to start recording. Please check your OpenAI API key.')
+      setIsConnecting(false)
+      stopRecording()
     }
   }
 
   const stopRecording = () => {
-    if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop()
-      setIsRecording(false)
+    if (socketRef.current) {
+      // Request final transcript
+      socketRef.current.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
+      
+      setTimeout(() => {
+        socketRef.current?.close()
+        socketRef.current = null
+      }, 500)
     }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop())
+      mediaStreamRef.current = null
+    }
+
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(console.error)
+      audioContextRef.current = null
+    }
+
+    setIsRecording(false)
+    setIsConnecting(false)
   }
 
   const handleSubmit = async () => {
@@ -80,12 +221,14 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
 
     setIsProcessing(true)
     try {
-      // Extract structured data from transcript (simple heuristic)
+      // Extract structured data from transcript
       const extracted = extractStructuredData(transcript)
       await onSubmit(transcript.trim(), extracted)
       setTranscript('')
+      accumulatedTranscriptRef.current = ''
     } catch (error) {
       console.error('Submit error:', error)
+      setError('Failed to save entry. Please try again.')
     } finally {
       setIsProcessing(false)
     }
@@ -140,11 +283,13 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     return extracted
   }
 
-  if (!isSupported) {
+  const apiKeyConfigured = !!process.env.NEXT_PUBLIC_OPENAI_API_KEY
+
+  if (!apiKeyConfigured) {
     return (
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <p className="text-yellow-800">
-          Voice recording is not supported in this browser. Please use Chrome, Edge, or Safari.
+          OpenAI API key not configured. Please set NEXT_PUBLIC_OPENAI_API_KEY environment variable.
         </p>
       </div>
     )
@@ -152,13 +297,19 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
-      <h2 className="text-xl font-semibold mb-4">Voice Diary Entry</h2>
+      <h2 className="text-xl font-semibold mb-4">Voice Diary Entry (OpenAI Realtime)</h2>
       
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-red-800 text-sm">{error}</p>
+        </div>
+      )}
+
       <div className="mb-4">
         <div className="flex items-center justify-center gap-4 mb-4">
           <button
             onClick={isRecording ? stopRecording : startRecording}
-            disabled={disabled || isProcessing}
+            disabled={disabled || isProcessing || isConnecting}
             className={`
               w-20 h-20 rounded-full flex items-center justify-center
               transition-all duration-200
@@ -166,11 +317,16 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
                 ? 'bg-red-500 hover:bg-red-600 animate-pulse'
                 : 'bg-primary-500 hover:bg-primary-600'
               }
-              ${disabled || isProcessing ? 'opacity-50 cursor-not-allowed' : ''}
+              ${disabled || isProcessing || isConnecting ? 'opacity-50 cursor-not-allowed' : ''}
               text-white shadow-lg
             `}
           >
-            {isRecording ? (
+            {isConnecting ? (
+              <svg className="animate-spin w-8 h-8" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            ) : isRecording ? (
               <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
                 <rect x="6" y="6" width="8" height="8" rx="1" />
               </svg>
@@ -182,7 +338,12 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
           </button>
         </div>
         
-        {isRecording && (
+        {isConnecting && (
+          <p className="text-center text-blue-600 font-medium">
+            Connecting to OpenAI Realtime API...
+          </p>
+        )}
+        {isRecording && !isConnecting && (
           <p className="text-center text-red-600 font-medium animate-pulse">
             Recording... Speak now
           </p>
@@ -193,7 +354,7 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
         <textarea
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
-          placeholder="Your voice transcript will appear here, or type manually..."
+          placeholder="Your voice transcript will appear here in real-time, or type manually..."
           className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           disabled={isProcessing}
         />
@@ -217,7 +378,10 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
         
         {transcript && (
           <button
-            onClick={() => setTranscript('')}
+            onClick={() => {
+              setTranscript('')
+              accumulatedTranscriptRef.current = ''
+            }}
             disabled={disabled || isProcessing}
             className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg font-medium transition-colors disabled:opacity-50"
           >
@@ -228,4 +392,3 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     </div>
   )
 }
-
