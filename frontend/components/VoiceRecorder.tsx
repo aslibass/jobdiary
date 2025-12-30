@@ -6,6 +6,7 @@ interface VoiceRecorderProps {
   onSubmit: (transcript: string, extracted?: any) => void
   disabled?: boolean
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void
+  onCommand?: (cmd: VoiceCommand) => void | Promise<void>
 }
 
 type ChatRole = 'user' | 'assistant' | 'system'
@@ -16,7 +17,18 @@ type ChatMessage = {
   ts: number
 }
 
-export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceRecorderProps) {
+type VoiceCommand =
+  | { type: 'list_jobs' }
+  | { type: 'create_job'; name: string }
+  | { type: 'select_job'; query: string }
+  | { type: 'mark_job_status'; status: 'quoted' | 'in_progress' | 'complete' | 'on_hold' }
+  | { type: 'search_entries'; query: string }
+  | { type: 'show_entries' }
+  | { type: 'set_job_stage'; stage: string }
+  | { type: 'save_entry' }
+  | { type: 'save_debrief'; transcript: string }
+
+export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   // Draft that will be saved to JobDiary (separate from assistant messages)
   const [transcript, setTranscript] = useState('')
@@ -106,6 +118,63 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
 
   const isSaveCommand = (text: string) => {
     return /\b(save it|save this|save entry|save now|save that)\b/i.test(text)
+  }
+
+  const parseVoiceCommand = (text: string): VoiceCommand | null => {
+    const t = text.trim()
+
+    if (/\b(list jobs|show jobs|what jobs)\b/i.test(t)) return { type: 'list_jobs' }
+
+    // create job
+    // examples: "new job kitchen repaint", "create job called Smith house"
+    {
+      const m = t.match(/\b(?:new|create|start)\s+job(?:\s+(?:called|named))?\s+(.+?)\s*$/i)
+      if (m?.[1]) return { type: 'create_job', name: m[1].trim() }
+    }
+
+    // select/switch job
+    {
+      const m = t.match(/\b(?:switch|select|open)\s+(?:to\s+)?job\s+(.+?)\s*$/i)
+      if (m?.[1]) return { type: 'select_job', query: m[1].trim() }
+    }
+
+    // mark status
+    if (/\b(mark|set)\s+(?:this\s+)?job\s+(?:as\s+)?complete\b/i.test(t) || /\b(job\s+done|finished\s+job)\b/i.test(t)) {
+      return { type: 'mark_job_status', status: 'complete' }
+    }
+    if (/\b(mark|set)\s+(?:this\s+)?job\s+(?:as\s+)?in\s+progress\b/i.test(t)) {
+      return { type: 'mark_job_status', status: 'in_progress' }
+    }
+    if (/\b(mark|set)\s+(?:this\s+)?job\s+(?:as\s+)?on\s+hold\b/i.test(t)) {
+      return { type: 'mark_job_status', status: 'on_hold' }
+    }
+    if (/\b(mark|set)\s+(?:this\s+)?job\s+(?:as\s+)?quoted\b/i.test(t)) {
+      return { type: 'mark_job_status', status: 'quoted' }
+    }
+
+    // search entries
+    {
+      const m = t.match(/\b(?:search|find)\s+(?:entries?|notes?)\s+(?:for|about)\s+(.+?)\s*$/i)
+      if (m?.[1]) return { type: 'search_entries', query: m[1].trim() }
+    }
+    if (/\b(show|list)\s+(?:all\s+)?entries\b/i.test(t) || /\b(clear\s+search)\b/i.test(t)) {
+      return { type: 'show_entries' }
+    }
+
+    // set stage (job_state patch)
+    {
+      const m = t.match(/\b(?:set|update)\s+(?:job\s+)?stage\s+(?:to\s+)?(.+?)\s*$/i)
+      if (m?.[1]) return { type: 'set_job_stage', stage: m[1].trim() }
+    }
+
+    // save variants
+    if (/\b(save debrief|debrief save|save as debrief)\b/i.test(t)) {
+      const draft = accumulatedTranscriptRef.current.trim()
+      return { type: 'save_debrief', transcript: draft }
+    }
+    if (isSaveCommand(t)) return { type: 'save_entry' }
+
+    return null
   }
 
   const startRecording = async () => {
@@ -220,15 +289,32 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
               // Add to visible conversation as USER
               appendMessage('user', newText)
 
-              // Voice command: "save it" triggers saving the current draft
-              if (isSaveCommand(newText)) {
-                onToast?.('Saving entry…', 'info')
-                // Do not add the save command itself to the draft.
-                // Save current draft (if any).
-                if (accumulatedTranscriptRef.current.trim()) {
-                  handleSubmit()
+              // Voice commands (mapped to JobDiary API)
+              const cmd = parseVoiceCommand(newText)
+              if (cmd) {
+                // Don't pollute the draft with command phrases
+                if (cmd.type === 'save_entry') {
+                  onToast?.('Saving entry…', 'info')
+                  if (accumulatedTranscriptRef.current.trim()) {
+                    handleSubmit()
+                  } else {
+                    onToast?.('Nothing to save yet. Say your update first.', 'error')
+                  }
+                } else if (cmd.type === 'save_debrief') {
+                  if (!cmd.transcript) {
+                    onToast?.('Nothing to debrief yet. Say your update first.', 'error')
+                  } else {
+                    onToast?.('Saving debrief…', 'info')
+                    Promise.resolve(onCommand?.(cmd)).catch((e) => {
+                      console.error('Command failed:', e)
+                      onToast?.(e?.message || 'Command failed', 'error')
+                    })
+                  }
                 } else {
-                  onToast?.('Nothing to save yet. Say your update first.', 'error')
+                  Promise.resolve(onCommand?.(cmd)).catch((e) => {
+                    console.error('Command failed:', e)
+                    onToast?.(e?.message || 'Command failed', 'error')
+                  })
                 }
                 return
               }

@@ -91,6 +91,23 @@ export async function updateJob(
   return response.json()
 }
 
+export async function updateJobState(
+  jobId: string,
+  userId: string,
+  patch: Record<string, any>
+): Promise<{ ok: boolean; updated_at: string }> {
+  const response = await fetch(`${API_BASE}/jobs/${jobId}/state?user_id=${userId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patch }),
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to update job state')
+  }
+  return response.json()
+}
+
 // Entries
 export async function getEntries(
   userId: string,

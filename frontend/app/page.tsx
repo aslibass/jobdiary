@@ -6,7 +6,17 @@ import JobList from '@/components/JobList'
 import EntryList from '@/components/EntryList'
 import ThemeToggle from '@/components/ThemeToggle'
 import Toast from '@/components/Toast'
-import { getJobs, createJob, createEntry } from '@/lib/api'
+import {
+  getJobs,
+  getJob,
+  getEntries,
+  createJob,
+  createEntry,
+  updateJob,
+  updateJobState,
+  searchEntries,
+  createDebrief,
+} from '@/lib/api'
 
 export default function Home() {
   const [jobs, setJobs] = useState<any[]>([])
@@ -15,6 +25,7 @@ export default function Home() {
   const [userId] = useState('demo_user') // In production, get from auth
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
+  const [entriesMode, setEntriesMode] = useState<'all' | 'search'>('all')
 
   useEffect(() => {
     loadJobs()
@@ -40,8 +51,9 @@ export default function Home() {
 
   const loadEntries = async (jobId: string) => {
     try {
-      const data = await getEntries(jobId)
+      const data = await getEntries(userId, jobId)
       setEntries(data)
+      setEntriesMode('all')
     } catch (error) {
       console.error('Failed to load entries:', error)
     }
@@ -92,6 +104,102 @@ export default function Home() {
     setToast({ message, type })
   }
 
+  type VoiceCommand =
+    | { type: 'list_jobs' }
+    | { type: 'create_job'; name: string }
+    | { type: 'select_job'; query: string }
+    | { type: 'mark_job_status'; status: 'quoted' | 'in_progress' | 'complete' | 'on_hold' }
+    | { type: 'search_entries'; query: string }
+    | { type: 'show_entries' }
+    | { type: 'set_job_stage'; stage: string }
+    | { type: 'save_debrief'; transcript: string }
+
+  const handleVoiceCommand = async (cmd: VoiceCommand) => {
+    switch (cmd.type) {
+      case 'list_jobs': {
+        await loadJobs()
+        const names = jobs.map((j) => j.name).slice(0, 6)
+        handleToast(names.length ? `Jobs: ${names.join(', ')}${jobs.length > 6 ? '…' : ''}` : 'No jobs yet', 'info')
+        return
+      }
+      case 'create_job': {
+        const newJob = await createJob({ user_id: userId, name: cmd.name })
+        setJobs((prev) => [newJob, ...prev])
+        setSelectedJob(newJob.id)
+        handleToast(`Created job: ${newJob.name}`, 'success')
+        return
+      }
+      case 'select_job': {
+        const q = cmd.query.toLowerCase()
+        const match =
+          jobs.find((j) => j.id === cmd.query) ||
+          jobs.find((j) => j.name.toLowerCase() === q) ||
+          jobs.find((j) => j.name.toLowerCase().includes(q))
+        if (!match) {
+          handleToast(`Couldn’t find a job matching “${cmd.query}”`, 'error')
+          return
+        }
+        setSelectedJob(match.id)
+        handleToast(`Switched to job: ${match.name}`, 'info')
+        return
+      }
+      case 'mark_job_status': {
+        if (!selectedJob) {
+          handleToast('Select a job first', 'error')
+          return
+        }
+        await updateJob(selectedJob, userId, { status: cmd.status })
+        await loadJobs()
+        handleToast(`Job marked ${cmd.status.replace('_', ' ')}`, 'success')
+        return
+      }
+      case 'set_job_stage': {
+        if (!selectedJob) {
+          handleToast('Select a job first', 'error')
+          return
+        }
+        await updateJobState(selectedJob, userId, { stage: cmd.stage })
+        await loadJobs()
+        handleToast(`Stage set to: ${cmd.stage}`, 'success')
+        return
+      }
+      case 'search_entries': {
+        if (!selectedJob) {
+          handleToast('Select a job first', 'error')
+          return
+        }
+        const results = await searchEntries(userId, selectedJob, cmd.query, 20)
+        setEntries(results)
+        setEntriesMode('search')
+        handleToast(`Search: ${results.length} result(s) for “${cmd.query}”`, 'info')
+        return
+      }
+      case 'show_entries': {
+        if (!selectedJob) return
+        await loadEntries(selectedJob)
+        handleToast('Showing all entries', 'info')
+        return
+      }
+      case 'save_debrief': {
+        if (!selectedJob) {
+          handleToast('Select a job first', 'error')
+          return
+        }
+        if (!cmd.transcript.trim()) {
+          handleToast('Nothing to debrief yet', 'error')
+          return
+        }
+        await createDebrief(userId, selectedJob, cmd.transcript.trim())
+        await loadJobs()
+        await loadEntries(selectedJob)
+        handleToast('Debrief saved', 'success')
+        return
+      }
+      default:
+        return
+    }
+  }
+
   const extractJobName = (transcript: string): string | null => {
     // Simple heuristic: look for "job" or project name patterns
     const patterns = [
@@ -128,6 +236,7 @@ export default function Home() {
             onSubmit={handleVoiceSubmit}
             disabled={loading}
             onToast={handleToast}
+            onCommand={handleVoiceCommand}
           />
         </div>
 
@@ -143,6 +252,11 @@ export default function Home() {
 
         {/* Entry List */}
         <div className="lg:col-span-2">
+          {entriesMode === 'search' && (
+            <div className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+              Showing search results. Say “show all entries” to return.
+            </div>
+          )}
           <EntryList
             entries={entries}
             jobId={selectedJob}
@@ -162,10 +276,3 @@ export default function Home() {
     </main>
   )
 }
-
-// Import getEntries
-async function getEntries(jobId: string) {
-  const { getEntries } = await import('@/lib/api')
-  return getEntries('demo_user', jobId)
-}
-
