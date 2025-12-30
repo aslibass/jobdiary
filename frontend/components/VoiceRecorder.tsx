@@ -22,6 +22,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
   const dataChannelRef = useRef<RTCDataChannel | null>(null)
   const accumulatedTranscriptRef = useRef<string>('')
   const ephemeralTokenRef = useRef<string | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
   const recordingStartTimeRef = useRef<number | null>(null)
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -102,6 +103,10 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       }
       
       ephemeralTokenRef.current = clientSecret
+      if (tokenData.session_id) {
+        sessionIdRef.current = tokenData.session_id
+        console.log('Session ID received:', tokenData.session_id)
+      }
       console.log('Ephemeral token received and stored (length:', clientSecret.length, ')')
 
       // Step 2: Get user's microphone
@@ -257,9 +262,19 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
       console.log('SDP offer length:', offer.sdp.length)
       console.log('SDP offer preview:', offer.sdp.substring(0, 100))
       console.log('Using token:', ephemeralTokenRef.current.substring(0, 10) + '...')
+      if (sessionIdRef.current) {
+        console.log('Using session ID:', sessionIdRef.current)
+      }
       
-      // Try the standard endpoint first
+      // Use the standard endpoint - OpenAI Realtime API expects SDP offer
+      // If session ID is available, we could try: /v1/realtime/sessions/{session_id}/calls
+      // But based on docs, the standard endpoint should work with just the ephemeral token
       let callUrl = 'https://api.openai.com/v1/realtime/calls'
+      if (sessionIdRef.current) {
+        // Try session-specific endpoint if we have session ID
+        callUrl = `https://api.openai.com/v1/realtime/sessions/${sessionIdRef.current}/calls`
+        console.log('Using session-specific endpoint:', callUrl)
+      }
       
       const sdpResponse = await fetch(callUrl, {
         method: 'POST',
