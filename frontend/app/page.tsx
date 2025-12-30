@@ -5,6 +5,7 @@ import VoiceRecorder from '@/components/VoiceRecorder'
 import JobList from '@/components/JobList'
 import EntryList from '@/components/EntryList'
 import ThemeToggle from '@/components/ThemeToggle'
+import Toast from '@/components/Toast'
 import { getJobs, createJob, createEntry } from '@/lib/api'
 
 export default function Home() {
@@ -13,6 +14,7 @@ export default function Home() {
   const [entries, setEntries] = useState<any[]>([])
   const [userId] = useState('demo_user') // In production, get from auth
   const [loading, setLoading] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
 
   useEffect(() => {
     loadJobs()
@@ -80,10 +82,14 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Failed to submit voice entry:', error)
-      alert('Failed to save entry. Please try again.')
+      setToast({ message: 'Failed to save entry. Please try again.', type: 'error' })
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleToast = (message: string, type?: 'success' | 'error' | 'info') => {
+    setToast({ message, type })
   }
 
   const extractJobName = (transcript: string): string | null => {
@@ -121,6 +127,7 @@ export default function Home() {
           <VoiceRecorder 
             onSubmit={handleVoiceSubmit}
             disabled={loading}
+            onToast={handleToast}
           />
         </div>
 
@@ -143,6 +150,15 @@ export default function Home() {
           />
         </div>
       </div>
+
+      {/* Toast notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </main>
   )
 }

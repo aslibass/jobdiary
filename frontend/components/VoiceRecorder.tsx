@@ -7,24 +7,55 @@ interface VoiceRecorderProps {
   disabled?: boolean
 }
 
-export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps) {
+export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [audioLevel, setAudioLevel] = useState(0)
   
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const dataChannelRef = useRef<RTCDataChannel | null>(null)
   const accumulatedTranscriptRef = useRef<string>('')
   const ephemeralTokenRef = useRef<string | null>(null)
+  const recordingStartTimeRef = useRef<number | null>(null)
+  const durationIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
+    // Load draft from localStorage on mount
+    const draft = localStorage.getItem('jobdiary_draft')
+    if (draft) {
+      try {
+        const draftData = JSON.parse(draft)
+        if (draftData.transcript) {
+          setTranscript(draftData.transcript)
+          accumulatedTranscriptRef.current = draftData.transcript
+          if (draftData.timestamp && Date.now() - draftData.timestamp < 24 * 60 * 60 * 1000) {
+            // Draft is less than 24 hours old
+            onToast?.('Draft restored from previous session', 'info')
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load draft:', e)
+      }
+    }
+
     return () => {
       stopRecording()
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current)
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
     }
-  }, [])
+  }, [onToast])
 
   const startRecording = async () => {
     if (isRecording || disabled) return
@@ -55,9 +86,20 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
           sampleRate: 24000,
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,
         },
       })
       mediaStreamRef.current = stream
+
+      // Set up audio level monitoring (will start after recording begins)
+      const audioContext = new AudioContext()
+      audioContextRef.current = audioContext
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      analyserRef.current = analyser
+      
+      const source = audioContext.createMediaStreamSource(stream)
+      source.connect(analyser)
 
       // Step 3: Create RTCPeerConnection
       const pc = new RTCPeerConnection({
@@ -179,6 +221,16 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       setIsConnecting(false)
       setIsRecording(true)
       setTranscript('')
+      accumulatedTranscriptRef.current = ''
+      recordingStartTimeRef.current = Date.now()
+      setRecordingDuration(0)
+      
+      // Start duration timer
+      durationIntervalRef.current = setInterval(() => {
+        if (recordingStartTimeRef.current) {
+          setRecordingDuration(Math.floor((Date.now() - recordingStartTimeRef.current) / 1000))
+        }
+      }, 1000)
 
     } catch (err: any) {
       console.error('Failed to start recording:', err)
@@ -189,6 +241,25 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   }
 
   const stopRecording = () => {
+    // Stop duration timer
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current)
+      durationIntervalRef.current = null
+    }
+    
+    // Stop audio level monitoring
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+    
+    // Close audio context
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
+      audioContextRef.current = null
+    }
+    analyserRef.current = null
+
     // Close data channel
     if (dataChannelRef.current) {
       dataChannelRef.current.close()
@@ -210,6 +281,17 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     ephemeralTokenRef.current = null
     setIsRecording(false)
     setIsConnecting(false)
+    setRecordingDuration(0)
+    setAudioLevel(0)
+    recordingStartTimeRef.current = null
+    
+    // Save draft to localStorage
+    if (transcript.trim()) {
+      localStorage.setItem('jobdiary_draft', JSON.stringify({
+        transcript: transcript,
+        timestamp: Date.now(),
+      }))
+    }
   }
 
   const handleSubmit = async () => {
@@ -222,9 +304,16 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       await onSubmit(transcript.trim(), extracted)
       setTranscript('')
       accumulatedTranscriptRef.current = ''
+      
+      // Clear draft from localStorage on successful save
+      localStorage.removeItem('jobdiary_draft')
+      
+      onToast?.('Entry saved successfully!', 'success')
     } catch (error) {
       console.error('Submit error:', error)
-      setError('Failed to save entry. Please try again.')
+      const errorMessage = error instanceof Error ? error.message : 'Failed to save entry. Please try again.'
+      setError(errorMessage)
+      onToast?.(errorMessage, 'error')
     } finally {
       setIsProcessing(false)
     }
@@ -233,10 +322,86 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   const extractStructuredData = (text: string): Record<string, any> => {
     const extracted: Record<string, any> = {}
 
-    // Extract tasks completed
+    // PAINTER-SPECIFIC: Extract areas/rooms painted
+    const areaPatterns = [
+      /(?:painted|finished|completed)\s+(?:the\s+)?([^.!?]+?)\s+(?:walls?|ceiling|trim|room|area|kitchen|bedroom|bathroom|living room|exterior|interior)/gi,
+      /(?:kitchen|bedroom|bathroom|living room|dining room|hallway|exterior|interior|trim|ceiling|walls?)\s+(?:walls?|ceiling|trim)?/gi,
+    ]
+    const areas: string[] = []
+    areaPatterns.forEach((pattern) => {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
+        const area = match[1] || match[0]
+        if (area && !areas.includes(area.trim().toLowerCase())) {
+          areas.push(area.trim())
+        }
+      })
+    })
+    if (areas.length > 0) {
+      extracted.areas_painted = areas
+    }
+
+    // PAINTER-SPECIFIC: Extract colors and paint brands
+    const colorPatterns = [
+      /(?:used|painted with|applied)\s+([0-9.]+(?:\s+gallons?)?)?\s*(?:of\s+)?([A-Z][A-Za-z\s]+?)\s+(?:paint|color|eggshell|satin|semi-gloss|flat|gloss)/gi,
+      /(?:color|paint)\s+(?:is|was|SW|BM|PPG)\s*([A-Z0-9\s-]+)/gi,
+      /(?:Sherwin Williams|Behr|Benjamin Moore|PPG|Valspar)\s+([A-Z0-9\s-]+)/gi,
+    ]
+    const colors: string[] = []
+    colorPatterns.forEach((pattern) => {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
+        const color = match[2] || match[1] || match[0]
+        if (color && !colors.includes(color.trim().toLowerCase())) {
+          colors.push(color.trim())
+        }
+      })
+    })
+    if (colors.length > 0) {
+      extracted.colors = colors
+    }
+
+    // PAINTER-SPECIFIC: Extract techniques
+    const techniquePatterns = [
+      /(?:cut in|cutting in|rolled|rolling|sprayed|spraying|brushed|brushing|primed|priming|sanded|sanding|taped|taping|patched|patching)/gi,
+    ]
+    const techniques: string[] = []
+    techniquePatterns.forEach((pattern) => {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
+        if (!techniques.includes(match[0].toLowerCase())) {
+          techniques.push(match[0].toLowerCase())
+        }
+      })
+    })
+    if (techniques.length > 0) {
+      extracted.techniques = techniques
+    }
+
+    // PAINTER-SPECIFIC: Extract materials with quantities
+    const materialPatterns = [
+      /(?:used|need|ordered)\s+([0-9.]+)\s+(?:gallons?|quarts?|liters?)\s+(?:of\s+)?([^.!?]+?)(?:\s+paint)?/gi,
+      /([0-9]+)\s+(?:brushes?|rollers?|trays?|drop cloths?|tape)/gi,
+    ]
+    const materials: Record<string, string> = {}
+    materialPatterns.forEach((pattern) => {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
+        const quantity = match[1]
+        const item = match[2] || match[0].replace(quantity, '').trim()
+        if (quantity && item) {
+          materials[item] = quantity
+        }
+      })
+    })
+    if (Object.keys(materials).length > 0) {
+      extracted.materials = materials
+    }
+
+    // Extract tasks completed (generic + painter-specific)
     const taskPatterns = [
       /(?:completed|finished|done)\s+([^.!?]+)/gi,
-      /(?:installed|built|fixed)\s+([^.!?]+)/gi,
+      /(?:painted|primed|sanded|taped|cut in|rolled|sprayed)\s+([^.!?]+)/gi,
     ]
     const tasks: string[] = []
     taskPatterns.forEach((pattern) => {
@@ -253,6 +418,7 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     const nextPatterns = [
       /(?:need to|will|should|next)\s+([^.!?]+)/gi,
       /(?:tomorrow|next week|later)\s+([^.!?]+)/gi,
+      /(?:touch up|finish|complete)\s+([^.!?]+)/gi,
     ]
     const nextActions: string[] = []
     nextPatterns.forEach((pattern) => {
@@ -265,16 +431,23 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       extracted.next_actions = nextActions
     }
 
-    // Extract materials
-    const materialPattern =
-      /(?:need|ordered|used)\s+(?:the\s+)?([^.!?]+?)\s+(?:materials?|supplies?|parts?)/gi
-    const materials: string[] = []
-    const materialMatches = Array.from(text.matchAll(materialPattern))
-    materialMatches.forEach((match) => {
-      materials.push(match[1].trim())
+    // PAINTER-SPECIFIC: Extract issues/problems
+    const issuePatterns = [
+      /(?:issue|problem|bleed through|peeling|cracking|touch up needed|repair needed)/gi,
+      /(?:need to|must|should)\s+(?:fix|repair|touch up|prime|sand)\s+([^.!?]+)/gi,
+    ]
+    const issues: string[] = []
+    issuePatterns.forEach((pattern) => {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
+        const issue = match[1] || match[0]
+        if (issue && !issues.includes(issue.trim().toLowerCase())) {
+          issues.push(issue.trim())
+        }
+      })
     })
-    if (materials.length > 0) {
-      extracted.materials = materials
+    if (issues.length > 0) {
+      extracted.issues = issues
     }
 
     return extracted
@@ -304,8 +477,8 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
             onClick={isRecording ? stopRecording : startRecording}
             disabled={disabled || isProcessing || isConnecting}
             className={`
-              w-20 h-20 rounded-full flex items-center justify-center
-              transition-all duration-200
+              w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center
+              transition-all duration-200 touch-manipulation
               ${
                 isRecording
                   ? 'bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 animate-pulse'

@@ -59,9 +59,51 @@ export default function EntryList({ entries, jobId, onRefresh }: EntryListProps)
               )}
 
               {entry.extracted && Object.keys(entry.extracted).length > 0 && (
-                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600 space-y-2">
+                  {entry.extracted.areas_painted && (
+                    <div>
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Areas: </span>
+                      <span className="text-xs text-gray-800 dark:text-gray-300">
+                        {Array.isArray(entry.extracted.areas_painted)
+                          ? entry.extracted.areas_painted.join(', ')
+                          : entry.extracted.areas_painted}
+                      </span>
+                    </div>
+                  )}
+                  {entry.extracted.colors && (
+                    <div>
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Colors: </span>
+                      <span className="text-xs text-gray-800 dark:text-gray-300">
+                        {Array.isArray(entry.extracted.colors)
+                          ? entry.extracted.colors.join(', ')
+                          : entry.extracted.colors}
+                      </span>
+                    </div>
+                  )}
+                  {entry.extracted.techniques && (
+                    <div>
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Techniques: </span>
+                      <span className="text-xs text-gray-800 dark:text-gray-300">
+                        {Array.isArray(entry.extracted.techniques)
+                          ? entry.extracted.techniques.join(', ')
+                          : entry.extracted.techniques}
+                      </span>
+                    </div>
+                  )}
+                  {entry.extracted.materials && (
+                    <div>
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Materials: </span>
+                      <span className="text-xs text-gray-800 dark:text-gray-300">
+                        {typeof entry.extracted.materials === 'object'
+                          ? Object.entries(entry.extracted.materials).map(([k, v]) => `${v} ${k}`).join(', ')
+                          : Array.isArray(entry.extracted.materials)
+                          ? entry.extracted.materials.join(', ')
+                          : entry.extracted.materials}
+                      </span>
+                    </div>
+                  )}
                   {entry.extracted.tasks_completed && (
-                    <div className="mb-2">
+                    <div>
                       <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Completed: </span>
                       <span className="text-xs text-gray-800 dark:text-gray-300">
                         {Array.isArray(entry.extracted.tasks_completed)
@@ -71,7 +113,7 @@ export default function EntryList({ entries, jobId, onRefresh }: EntryListProps)
                     </div>
                   )}
                   {entry.extracted.next_actions && (
-                    <div className="mb-2">
+                    <div>
                       <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Next: </span>
                       <span className="text-xs text-gray-800 dark:text-gray-300">
                         {Array.isArray(entry.extracted.next_actions)
@@ -80,13 +122,13 @@ export default function EntryList({ entries, jobId, onRefresh }: EntryListProps)
                       </span>
                     </div>
                   )}
-                  {entry.extracted.materials && (
+                  {entry.extracted.issues && (
                     <div>
-                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Materials: </span>
-                      <span className="text-xs text-gray-800 dark:text-gray-300">
-                        {Array.isArray(entry.extracted.materials)
-                          ? entry.extracted.materials.join(', ')
-                          : entry.extracted.materials}
+                      <span className="text-xs font-medium text-red-600 dark:text-red-400">Issues: </span>
+                      <span className="text-xs text-red-800 dark:text-red-300">
+                        {Array.isArray(entry.extracted.issues)
+                          ? entry.extracted.issues.join(', ')
+                          : entry.extracted.issues}
                       </span>
                     </div>
                   )}
