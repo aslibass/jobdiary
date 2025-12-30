@@ -98,10 +98,22 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
               accumulatedTranscriptRef.current = final
               setTranscript(final)
             }
+          } else if (data.type === 'input_audio_buffer.timeout_triggered') {
+            // Idle timeout triggered - user hasn't spoken for idle_timeout_ms
+            // This commits an empty audio segment and prompts the model to respond
+            console.log('Idle timeout triggered - no user input detected')
+            // Optionally: show a message to the user or auto-submit if transcript exists
+            if (accumulatedTranscriptRef.current.trim()) {
+              // If we have a transcript, we could auto-submit or show a prompt
+              console.log('Transcript available on idle timeout:', accumulatedTranscriptRef.current)
+            }
           } else if (data.type === 'error') {
             console.error('OpenAI Realtime API error:', data)
             setError(data.error?.message || 'An error occurred with transcription')
             stopRecording()
+          } else {
+            // Log other events for debugging
+            console.debug('Realtime API event:', data.type, data)
           }
         } catch (err) {
           console.error('Error parsing data channel message:', err)
@@ -126,9 +138,10 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
             },
             turn_detection: {
               type: 'server_vad', // Server-side voice activity detection
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
+              threshold: 0.5, // Sensitivity of voice detection (0.0 to 1.0)
+              prefix_padding_ms: 300, // Audio to include before detected speech
+              silence_duration_ms: 500, // Duration of silence to trigger turn end
+              idle_timeout_ms: 30000, // Timeout after assistant response if no user input (30 seconds)
             },
             temperature: 0.8,
             max_response_output_tokens: 4096,
