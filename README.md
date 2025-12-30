@@ -94,8 +94,33 @@ A FastAPI-based conversational job diary API for tradies. This service stores en
    alembic upgrade head
    ```
 
+   **Or use the migration script:**
+   ```bash
+   # Linux/Mac
+   bash scripts/migrate.sh
+   
+   # Windows
+   scripts\migrate.bat
+   ```
+
 6. **Start the development server**
 
+   **Option 1: Use the startup script (recommended)**
+   ```bash
+   # Linux/Mac
+   bash start.sh
+   # or make it executable: chmod +x start.sh && ./start.sh
+   
+   # Windows
+   start.bat
+   ```
+   
+   The startup script will:
+   - Check environment variables
+   - Run database migrations automatically
+   - Start the Uvicorn server
+   
+   **Option 2: Manual start**
    ```bash
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
@@ -125,7 +150,8 @@ A FastAPI-based conversational job diary API for tradies. This service stores en
 2. **Deploy the application**
 
    - Connect your repository to Railway
-   - Railway will automatically detect the `Procfile`
+   - Railway will automatically detect the `Procfile` which uses `start.sh`
+   - The startup script will automatically run migrations and start the server
    - The app will use the `DATABASE_URL` provided by Railway
 
 3. **Set environment variables**
@@ -136,18 +162,22 @@ A FastAPI-based conversational job diary API for tradies. This service stores en
    - `ENV`: `prod` (optional)
    - `CORS_ORIGINS`: Your allowed origins (optional, defaults to `*`)
 
-4. **Run migrations**
+4. **Migrations**
 
-   After deployment, run migrations:
-
+   **Automatic:** The `start.sh` script (used by the `Procfile`) automatically runs migrations on each deploy, so you don't need to run them manually.
+   
+   **Manual (if needed):**
+   
    ```bash
    # Using Railway CLI
    railway run alembic upgrade head
 
    # Or via Railway dashboard shell
+   # Or use the migration script:
+   railway run bash scripts/migrate.sh
    ```
 
-   Or create an initial migration if needed:
+   To create an initial migration (first time only):
 
    ```bash
    railway run alembic revision --autogenerate -m "Initial schema"
