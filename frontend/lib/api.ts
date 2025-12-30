@@ -1,15 +1,7 @@
-import axios from 'axios'
+// Client-side API functions - all calls go through Next.js API routes
+// No API keys exposed to browser
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://jobdiaryapi-production.up.railway.app'
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || ''
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    'X-API-Key': API_KEY,
-    'Content-Type': 'application/json',
-  },
-})
+const API_BASE = '/api'
 
 export interface Job {
   id: string
@@ -52,22 +44,34 @@ export interface EntryCreate {
 
 // Jobs
 export async function getJobs(userId: string, limit: number = 20): Promise<Job[]> {
-  const response = await api.get('/jobs', {
-    params: { user_id: userId, limit },
-  })
-  return response.data
+  const response = await fetch(`${API_BASE}/jobs?user_id=${userId}&limit=${limit}`)
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to fetch jobs')
+  }
+  return response.json()
 }
 
 export async function getJob(jobId: string, userId: string): Promise<Job> {
-  const response = await api.get(`/jobs/${jobId}`, {
-    params: { user_id: userId },
-  })
-  return response.data
+  const response = await fetch(`${API_BASE}/jobs/${jobId}?user_id=${userId}`)
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to fetch job')
+  }
+  return response.json()
 }
 
 export async function createJob(data: JobCreate): Promise<Job> {
-  const response = await api.post('/jobs', data)
-  return response.data
+  const response = await fetch(`${API_BASE}/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to create job')
+  }
+  return response.json()
 }
 
 export async function updateJob(
@@ -75,10 +79,16 @@ export async function updateJob(
   userId: string,
   data: Partial<Job>
 ): Promise<Job> {
-  const response = await api.patch(`/jobs/${jobId}`, data, {
-    params: { user_id: userId },
+  const response = await fetch(`${API_BASE}/jobs/${jobId}?user_id=${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
   })
-  return response.data
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to update job')
+  }
+  return response.json()
 }
 
 // Entries
@@ -87,15 +97,27 @@ export async function getEntries(
   jobId: string,
   limit: number = 20
 ): Promise<Entry[]> {
-  const response = await api.get('/entries', {
-    params: { user_id: userId, job_id: jobId, limit },
-  })
-  return response.data
+  const response = await fetch(
+    `${API_BASE}/entries?user_id=${userId}&job_id=${jobId}&limit=${limit}`
+  )
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to fetch entries')
+  }
+  return response.json()
 }
 
 export async function createEntry(data: EntryCreate): Promise<Entry> {
-  const response = await api.post('/entries', data)
-  return response.data
+  const response = await fetch(`${API_BASE}/entries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to create entry')
+  }
+  return response.json()
 }
 
 // Search
@@ -105,13 +127,21 @@ export async function searchEntries(
   query: string,
   limit: number = 10
 ): Promise<Entry[]> {
-  const response = await api.post('/entries/search', {
-    user_id: userId,
-    job_id: jobId,
-    query,
-    limit,
+  const response = await fetch(`${API_BASE}/entries/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: userId,
+      job_id: jobId,
+      query,
+      limit,
+    }),
   })
-  return response.data
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to search entries')
+  }
+  return response.json()
 }
 
 // Debrief
@@ -120,11 +150,18 @@ export async function createDebrief(
   jobNameOrId: string,
   transcript: string
 ): Promise<{ job: Job; entry: Entry }> {
-  const response = await api.post('/debrief', {
-    user_id: userId,
-    job_name_or_id: jobNameOrId,
-    transcript,
+  const response = await fetch(`${API_BASE}/debrief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: userId,
+      job_name_or_id: jobNameOrId,
+      transcript,
+    }),
   })
-  return response.data
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to create debrief')
+  }
+  return response.json()
 }
-

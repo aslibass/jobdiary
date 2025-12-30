@@ -14,11 +14,11 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   const [error, setError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   
-  const socketRef = useRef<WebSocket | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const dataChannelRef = useRef<RTCDataChannel | null>(null)
   const accumulatedTranscriptRef = useRef<string>('')
+  const ephemeralTokenRef = useRef<string | null>(null)
 
   useEffect(() => {
     return () => {
@@ -29,50 +29,87 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   const startRecording = async () => {
     if (isRecording || disabled) return
 
-    const apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY
-    if (!apiKey) {
-      setError('OpenAI API key not configured. Set NEXT_PUBLIC_OPENAI_API_KEY')
-      return
-    }
-
     setError(null)
     setIsConnecting(true)
     accumulatedTranscriptRef.current = ''
 
     try {
-      // Get user's microphone
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      // Step 1: Get ephemeral token from our server
+      const tokenResponse = await fetch('/api/realtime-token', {
+        method: 'POST',
+      })
+
+      if (!tokenResponse.ok) {
+        const error = await tokenResponse.json()
+        throw new Error(error.error || 'Failed to get ephemeral token')
+      }
+
+      const tokenData = await tokenResponse.json()
+      ephemeralTokenRef.current = tokenData.client_secret
+
+      // Step 2: Get user's microphone
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           sampleRate: 24000,
           echoCancellation: true,
           noiseSuppression: true,
-        }
+        },
       })
       mediaStreamRef.current = stream
 
-      // Create audio context for processing (24kHz for OpenAI Realtime API)
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 })
-      audioContextRef.current = audioContext
+      // Step 3: Create RTCPeerConnection
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      })
+      peerConnectionRef.current = pc
 
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
-      processorRef.current = processor
+      // Add audio track
+      stream.getTracks().forEach((track) => {
+        pc.addTrack(track, stream)
+      })
 
-      // Connect WebSocket to OpenAI Realtime API
-      const model = 'gpt-4o-realtime-preview-2024-12-17'
-      const wsUrl = `wss://api.openai.com/v1/realtime?model=${model}&api_key=${apiKey}`
-      const ws = new WebSocket(wsUrl)
+      // Step 4: Create data channel for transcription events
+      const dataChannel = pc.createDataChannel('transcription', { ordered: true })
+      dataChannelRef.current = dataChannel
 
-      socketRef.current = ws
+      dataChannel.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
 
-      ws.onopen = () => {
-        setIsConnecting(false)
-        setIsRecording(true)
-        setTranscript('')
-        
-        // Configure the session
-        ws.send(JSON.stringify({
+          // Handle transcription events
+          if (data.type === 'conversation.item.input_audio_transcription.completed') {
+            const newText = data.transcript
+            if (newText) {
+              accumulatedTranscriptRef.current += newText + ' '
+              setTranscript(accumulatedTranscriptRef.current.trim())
+            }
+          } else if (data.type === 'response.audio_transcript.delta') {
+            const delta = data.delta
+            if (delta) {
+              accumulatedTranscriptRef.current += delta
+              setTranscript(accumulatedTranscriptRef.current.trim())
+            }
+          } else if (data.type === 'response.audio_transcript.done') {
+            const final = data.transcript
+            if (final) {
+              accumulatedTranscriptRef.current = final
+              setTranscript(final)
+            }
+          } else if (data.type === 'error') {
+            console.error('OpenAI Realtime API error:', data)
+            setError(data.error?.message || 'An error occurred with transcription')
+            stopRecording()
+          }
+        } catch (err) {
+          console.error('Error parsing data channel message:', err)
+        }
+      }
+
+      dataChannel.onopen = () => {
+        console.log('Data channel opened')
+        // Configure session via data channel
+        dataChannel.send(JSON.stringify({
           type: 'session.update',
           session: {
             modalities: ['text'],
@@ -93,92 +130,38 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
             max_response_output_tokens: 4096,
           },
         }))
-
-        // Start sending audio
-        ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
-
-        // Process audio and send to OpenAI
-        processor.onaudioprocess = (e) => {
-          if (ws.readyState !== WebSocket.OPEN) return
-
-          const inputData = e.inputBuffer.getChannelData(0)
-          const pcm16 = new Int16Array(inputData.length)
-          
-          // Convert float32 (-1 to 1) to int16 (-32768 to 32767)
-          for (let i = 0; i < inputData.length; i++) {
-            const s = Math.max(-1, Math.min(1, inputData[i]))
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
-          }
-
-          // Convert to base64 for transmission
-          const base64Audio = btoa(
-            String.fromCharCode.apply(null, Array.from(pcm16))
-          )
-
-          // Send audio chunk
-          ws.send(JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: base64Audio,
-          }))
-        }
-
-        source.connect(processor)
-        processor.connect(audioContext.destination)
       }
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
+      // Step 5: Create SDP offer
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
 
-          // Handle transcription events
-          if (data.type === 'conversation.item.input_audio_transcription.completed') {
-            const newText = data.transcript
-            if (newText) {
-              accumulatedTranscriptRef.current += newText + ' '
-              setTranscript(accumulatedTranscriptRef.current.trim())
-            }
-          } else if (data.type === 'response.audio_transcript.delta') {
-            // Partial transcript updates
-            const delta = data.delta
-            if (delta) {
-              accumulatedTranscriptRef.current += delta
-              setTranscript(accumulatedTranscriptRef.current.trim())
-            }
-          } else if (data.type === 'response.audio_transcript.done') {
-            // Final transcript
-            const final = data.transcript
-            if (final) {
-              accumulatedTranscriptRef.current = final
-              setTranscript(final)
-            }
-          } else if (data.type === 'error') {
-            console.error('OpenAI Realtime API error:', data)
-            setError(data.error?.message || 'An error occurred with transcription')
-            stopRecording()
-          } else if (data.type === 'session.updated') {
-            // Session configured successfully
-            console.log('Session updated:', data)
-          }
-        } catch (err) {
-          console.error('Error parsing WebSocket message:', err)
-        }
+      // Step 6: Send SDP offer to OpenAI Realtime API
+      const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ephemeralTokenRef.current}`,
+          'Content-Type': 'application/sdp',
+        },
+        body: offer.sdp,
+      })
+
+      if (!sdpResponse.ok) {
+        const errorText = await sdpResponse.text()
+        throw new Error(`Failed to create call: ${errorText}`)
       }
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        setError('Connection error. Please check your API key and try again.')
-        stopRecording()
+      // Step 7: Set SDP answer as remote description
+      const answerSdp = await sdpResponse.text()
+      const answer = {
+        type: 'answer' as RTCSdpType,
+        sdp: answerSdp,
       }
+      await pc.setRemoteDescription(answer)
 
-      ws.onclose = (event) => {
-        console.log('WebSocket closed:', event.code, event.reason)
-        setIsRecording(false)
-        setIsConnecting(false)
-        
-        if (event.code !== 1000) {
-          setError('Connection closed unexpectedly. Please try again.')
-        }
-      }
+      setIsConnecting(false)
+      setIsRecording(true)
+      setTranscript('')
 
     } catch (err: any) {
       console.error('Failed to start recording:', err)
@@ -189,35 +172,25 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
   }
 
   const stopRecording = () => {
-    // Commit final audio buffer
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
-      
-      // Wait a bit for final transcription, then close
-      setTimeout(() => {
-        if (socketRef.current) {
-          socketRef.current.close(1000, 'Recording stopped')
-          socketRef.current = null
-        }
-      }, 1000)
+    // Close data channel
+    if (dataChannelRef.current) {
+      dataChannelRef.current.close()
+      dataChannelRef.current = null
     }
 
-    // Stop audio processing
-    if (processorRef.current) {
-      processorRef.current.disconnect()
-      processorRef.current = null
+    // Close peer connection
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close()
+      peerConnectionRef.current = null
     }
 
+    // Stop media stream
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop())
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop())
       mediaStreamRef.current = null
     }
 
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(console.error)
-      audioContextRef.current = null
-    }
-
+    ephemeralTokenRef.current = null
     setIsRecording(false)
     setIsConnecting(false)
   }
@@ -242,14 +215,14 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
 
   const extractStructuredData = (text: string): Record<string, any> => {
     const extracted: Record<string, any> = {}
-    
+
     // Extract tasks completed
     const taskPatterns = [
       /(?:completed|finished|done)\s+([^.!?]+)/gi,
       /(?:installed|built|fixed)\s+([^.!?]+)/gi,
     ]
     const tasks: string[] = []
-    taskPatterns.forEach(pattern => {
+    taskPatterns.forEach((pattern) => {
       const matches = text.matchAll(pattern)
       for (const match of matches) {
         tasks.push(match[1].trim())
@@ -265,7 +238,7 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       /(?:tomorrow|next week|later)\s+([^.!?]+)/gi,
     ]
     const nextActions: string[] = []
-    nextPatterns.forEach(pattern => {
+    nextPatterns.forEach((pattern) => {
       const matches = text.matchAll(pattern)
       for (const match of matches) {
         nextActions.push(match[1].trim())
@@ -276,7 +249,8 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     }
 
     // Extract materials
-    const materialPattern = /(?:need|ordered|used)\s+(?:the\s+)?([^.!?]+?)\s+(?:materials?|supplies?|parts?)/gi
+    const materialPattern =
+      /(?:need|ordered|used)\s+(?:the\s+)?([^.!?]+?)\s+(?:materials?|supplies?|parts?)/gi
     const materials: string[] = []
     const materialMatches = text.matchAll(materialPattern)
     for (const match of materialMatches) {
@@ -289,22 +263,12 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     return extracted
   }
 
-  const apiKeyConfigured = !!process.env.NEXT_PUBLIC_OPENAI_API_KEY
-
-  if (!apiKeyConfigured) {
-    return (
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <p className="text-yellow-800">
-          OpenAI API key not configured. Please set NEXT_PUBLIC_OPENAI_API_KEY environment variable.
-        </p>
-      </div>
-    )
-  }
-
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
-      <h2 className="text-xl font-semibold mb-4">Voice Diary Entry (OpenAI Realtime)</h2>
-      
+      <h2 className="text-xl font-semibold mb-4">
+        Voice Diary Entry (OpenAI Realtime WebRTC)
+      </h2>
+
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
           <p className="text-red-800 text-sm">{error}</p>
@@ -325,18 +289,38 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
             className={`
               w-20 h-20 rounded-full flex items-center justify-center
               transition-all duration-200
-              ${isRecording
-                ? 'bg-red-500 hover:bg-red-600 animate-pulse'
-                : 'bg-primary-500 hover:bg-primary-600'
+              ${
+                isRecording
+                  ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                  : 'bg-primary-500 hover:bg-primary-600'
               }
-              ${disabled || isProcessing || isConnecting ? 'opacity-50 cursor-not-allowed' : ''}
+              ${
+                disabled || isProcessing || isConnecting
+                  ? 'opacity-50 cursor-not-allowed'
+                  : ''
+              }
               text-white shadow-lg
             `}
           >
             {isConnecting ? (
-              <svg className="animate-spin w-8 h-8" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              <svg
+                className="animate-spin w-8 h-8"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
               </svg>
             ) : isRecording ? (
               <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20">
@@ -349,10 +333,10 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
             )}
           </button>
         </div>
-        
+
         {isConnecting && (
           <p className="text-center text-blue-600 font-medium">
-            Connecting to OpenAI Realtime API...
+            Connecting to OpenAI Realtime API via WebRTC...
           </p>
         )}
         {isRecording && !isConnecting && (
@@ -384,15 +368,16 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
           className={`
             flex-1 px-4 py-2 rounded-lg font-medium
             transition-colors
-            ${transcript.trim() && !disabled && !isProcessing
-              ? 'bg-primary-600 hover:bg-primary-700 text-white'
-              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            ${
+              transcript.trim() && !disabled && !isProcessing
+                ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }
           `}
         >
           {isProcessing ? 'Saving...' : 'Save Entry'}
         </button>
-        
+
         {transcript && (
           <button
             onClick={() => {

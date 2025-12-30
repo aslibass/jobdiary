@@ -35,15 +35,22 @@ npm install
 
 ### Environment Variables
 
-Create a `.env.local` file:
+Create a `.env.local` file (server-side only - never exposed to browser):
 
 ```env
-NEXT_PUBLIC_API_URL=https://jobdiaryapi-production.up.railway.app
-NEXT_PUBLIC_API_KEY=your-jobdiary-api-key-here
-NEXT_PUBLIC_OPENAI_API_KEY=your-openai-api-key-here
+# OpenAI API key (server-side only)
+OPENAI_API_KEY=your-openai-api-key-here
+
+# JobDiary API credentials (server-side only)
+JOBDIARY_API_URL=https://jobdiaryapi-production.up.railway.app
+JOBDIARY_API_KEY=your-jobdiary-api-key-here
 ```
 
-**Important:** You need an OpenAI API key with access to the Realtime API. The key must be exposed to the browser (via `NEXT_PUBLIC_` prefix), so be aware of usage costs.
+**Important:** 
+- ✅ **Never** put API keys in `NEXT_PUBLIC_*` variables
+- ✅ All API keys are server-side only
+- ✅ Ephemeral tokens are generated server-side for OpenAI Realtime API
+- ✅ All JobDiary API calls go through Next.js API routes
 
 ### Development
 
@@ -104,13 +111,30 @@ The system will:
 - Extract structured data (tasks, materials, next actions)
 - Save everything to the JobDiary API
 
-## OpenAI Realtime API
+## OpenAI Realtime API (WebRTC)
 
-This frontend uses OpenAI's Realtime API for high-quality voice transcription. Key features:
+This frontend uses OpenAI's Realtime API via WebRTC for high-quality voice transcription. Key features:
 - **Real-time streaming** - See transcription as you speak
 - **High accuracy** - Better than browser Web Speech API
 - **Server-side VAD** - Automatic voice activity detection
 - **WebRTC connection** - Low-latency audio streaming
+- **Ephemeral tokens** - Secure authentication via server endpoint
+- **No exposed keys** - All API keys stay server-side
 
-**Note:** The OpenAI API key is exposed to the browser. Monitor your usage and costs.
+### Security Architecture
+
+1. **Ephemeral Token Endpoint** (`/api/realtime-token`):
+   - Server requests ephemeral client secret from OpenAI
+   - Returns short-lived token to browser (expires in 60 seconds)
+   - OpenAI API key never exposed to client
+
+2. **JobDiary API Routes** (`/api/jobs`, `/api/entries`, etc.):
+   - All JobDiary API calls go through Next.js API routes
+   - JobDiary API key only exists server-side
+   - Client never sees JobDiary credentials
+
+3. **WebRTC Connection**:
+   - Browser uses ephemeral token to establish WebRTC connection
+   - Direct audio streaming to OpenAI (low latency)
+   - Transcription events sent via data channel
 
