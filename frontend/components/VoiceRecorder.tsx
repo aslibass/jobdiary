@@ -70,7 +70,8 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       })
 
       // Step 4: Create data channel for transcription events
-      const dataChannel = pc.createDataChannel('transcription', { ordered: true })
+      // OpenAI Realtime API uses 'oai-events' as the data channel name
+      const dataChannel = pc.createDataChannel('oai-events', { ordered: true })
       dataChannelRef.current = dataChannel
 
       dataChannel.onmessage = (event) => {
