@@ -151,12 +151,26 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         try {
           const data = JSON.parse(event.data)
 
-          // Handle transcription events
+          // Handle transcription / text events
           if (data.type === 'conversation.item.input_audio_transcription.completed') {
             const newText = data.transcript
             if (newText) {
               accumulatedTranscriptRef.current += newText + ' '
               setTranscript(accumulatedTranscriptRef.current.trim())
+            }
+          } else if (data.type === 'response.text.delta') {
+            // Some sessions stream transcript as response text deltas
+            const delta = data.delta
+            if (delta) {
+              accumulatedTranscriptRef.current += delta
+              setTranscript(accumulatedTranscriptRef.current.trim())
+            }
+          } else if (data.type === 'response.text.done') {
+            // Final text (if provided)
+            const final = data.text
+            if (final) {
+              accumulatedTranscriptRef.current = final
+              setTranscript(final)
             }
           } else if (data.type === 'response.audio_transcript.delta') {
             const delta = data.delta
