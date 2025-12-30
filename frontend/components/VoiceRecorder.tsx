@@ -266,15 +266,13 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         console.log('Using session ID:', sessionIdRef.current)
       }
       
-      // Use the standard endpoint - OpenAI Realtime API expects SDP offer
-      // If session ID is available, we could try: /v1/realtime/sessions/{session_id}/calls
-      // But based on docs, the standard endpoint should work with just the ephemeral token
-      let callUrl = 'https://api.openai.com/v1/realtime/calls'
-      if (sessionIdRef.current) {
-        // Try session-specific endpoint if we have session ID
-        callUrl = `https://api.openai.com/v1/realtime/sessions/${sessionIdRef.current}/calls`
-        console.log('Using session-specific endpoint:', callUrl)
-      }
+      // OpenAI Realtime API WebRTC call creation
+      // The endpoint expects the SDP offer in the body with Content-Type: application/sdp
+      // Based on official docs, we use /v1/realtime/calls with the ephemeral token
+      const callUrl = 'https://api.openai.com/v1/realtime/calls'
+      
+      console.log('Call URL:', callUrl)
+      console.log('SDP offer first line:', offer.sdp.split('\n')[0])
       
       const sdpResponse = await fetch(callUrl, {
         method: 'POST',
