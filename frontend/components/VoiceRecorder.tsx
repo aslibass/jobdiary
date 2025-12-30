@@ -225,10 +225,10 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     ]
     const tasks: string[] = []
     taskPatterns.forEach((pattern) => {
-      const matches = text.matchAll(pattern)
-      for (const match of matches) {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
         tasks.push(match[1].trim())
-      }
+      })
     })
     if (tasks.length > 0) {
       extracted.tasks_completed = tasks
@@ -241,10 +241,10 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     ]
     const nextActions: string[] = []
     nextPatterns.forEach((pattern) => {
-      const matches = text.matchAll(pattern)
-      for (const match of matches) {
+      const matches = Array.from(text.matchAll(pattern))
+      matches.forEach((match) => {
         nextActions.push(match[1].trim())
-      }
+      })
     })
     if (nextActions.length > 0) {
       extracted.next_actions = nextActions
@@ -254,10 +254,10 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
     const materialPattern =
       /(?:need|ordered|used)\s+(?:the\s+)?([^.!?]+?)\s+(?:materials?|supplies?|parts?)/gi
     const materials: string[] = []
-    const materialMatches = text.matchAll(materialPattern)
-    for (const match of materialMatches) {
+    const materialMatches = Array.from(text.matchAll(materialPattern))
+    materialMatches.forEach((match) => {
       materials.push(match[1].trim())
-    }
+    })
     if (materials.length > 0) {
       extracted.materials = materials
     }
