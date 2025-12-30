@@ -63,7 +63,7 @@ No system can be guaranteed 100% secure. You should avoid submitting sensitive i
 
 For privacy questions or deletion requests, contact:
 
-- **Email:** `REPLACE_WITH_YOUR_EMAIL`
+- **Email:** `viren.joseph@gmail.com`
 
 ## Changes to this policy
 
