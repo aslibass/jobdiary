@@ -75,7 +75,8 @@ export async function POST(request: NextRequest) {
     // Request ephemeral session from OpenAI
     // IMPORTANT: keep your normal API key on the server only
     // Based on OpenAI's official realtime-agents repo: https://github.com/openai/openai-realtime-agents
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    // Using gpt-realtime-mini model for cost efficiency
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions?model=gpt-realtime-mini', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
@@ -295,16 +296,18 @@ export default function VoiceRecorder() {
       // 7) Configure session behavior (voice, instructions, turn-taking, etc.)
       dc.onopen = () => {
         // Session updates are done by sending client events over the data channel
+        // Using gpt-realtime-mini model with whisper-1 for transcription
         dc.send(JSON.stringify({
           type: 'session.update',
           session: {
+            model: 'gpt-realtime-mini', // Use gpt-realtime-mini for cost efficiency
             modalities: ['text'], // or ['text', 'audio'] for speech-to-speech
             instructions: 'You are a transcription assistant. Transcribe accurately.',
             voice: 'alloy', // Options: alloy, echo, fable, onyx, nova, shimmer
             input_audio_format: 'pcm16',
             output_audio_format: 'pcm16',
             input_audio_transcription: {
-              model: 'whisper-1',
+              model: 'whisper-1', // Use whisper-1 for transcription
             },
             turn_detection: {
               type: 'server_vad', // Server-side voice activity detection
