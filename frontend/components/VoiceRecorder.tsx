@@ -221,7 +221,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         }))
       }
 
-      // Step 5: Create SDP offer
+      // Step 5: Create SDP offer and set local description FIRST
+      // Then wait for ICE gathering before sending to OpenAI
       // Wait for ICE gathering to complete for better SDP
       const offer = await new Promise<RTCSessionDescriptionInit>((resolve, reject) => {
         pc.onicegatheringstatechange = () => {
@@ -254,25 +255,20 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
         throw new Error('Ephemeral token is missing. Please try again.')
       }
       
-      if (!offer.sdp) {
+      if (!finalOffer.sdp) {
         throw new Error('SDP offer is missing')
       }
       
       console.log('Creating WebRTC call with ephemeral token...')
-      console.log('SDP offer length:', offer.sdp.length)
-      console.log('SDP offer preview:', offer.sdp.substring(0, 100))
+      console.log('SDP offer length:', finalOffer.sdp.length)
+      console.log('SDP offer first line:', finalOffer.sdp.split('\n')[0])
+      console.log('ICE gathering state:', pc.iceGatheringState)
       console.log('Using token:', ephemeralTokenRef.current.substring(0, 10) + '...')
-      if (sessionIdRef.current) {
-        console.log('Using session ID:', sessionIdRef.current)
-      }
       
       // OpenAI Realtime API WebRTC call creation
       // The endpoint expects the SDP offer in the body with Content-Type: application/sdp
       // Based on official docs, we use /v1/realtime/calls with the ephemeral token
       const callUrl = 'https://api.openai.com/v1/realtime/calls'
-      
-      console.log('Call URL:', callUrl)
-      console.log('SDP offer first line:', offer.sdp.split('\n')[0])
       
       const sdpResponse = await fetch(callUrl, {
         method: 'POST',
@@ -280,7 +276,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast }: VoiceReco
           'Authorization': `Bearer ${ephemeralTokenRef.current}`,
           'Content-Type': 'application/sdp',
         },
-        body: offer.sdp,
+        body: finalOffer.sdp,
       })
 
       if (!sdpResponse.ok) {
