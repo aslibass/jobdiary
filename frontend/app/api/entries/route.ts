@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const JOBDIARY_API_URL = process.env.JOBDIARY_API_URL || 'https://jobdiaryapi-production.up.railway.app'
+const JOBDIARY_API_URL = (process.env.JOBDIARY_API_URL || 'https://jobdiaryapi-production.up.railway.app').replace(/\/+$/, '')
 const JOBDIARY_API_KEY = process.env.JOBDIARY_API_KEY
 
 export async function GET(request: NextRequest) {

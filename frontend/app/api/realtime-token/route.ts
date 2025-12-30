@@ -17,7 +17,11 @@ export async function POST(request: NextRequest) {
     // The sessions endpoint creates an ephemeral session token
     // We can optionally configure the session here, or via session.update after WebRTC connection
     // For now, we'll create a basic session and configure it via data channel
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    // IMPORTANT:
+    // We must set the Realtime model at session-creation time. The WebRTC call is created
+    // *before* the data channel opens, so relying on `session.update` alone can leave
+    // the session with `model: ""`, which can cause `/v1/realtime/calls` to 400.
+    const response = await fetch('https://api.openai.com/v1/realtime/sessions?model=gpt-realtime-mini', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiApiKey}`,
