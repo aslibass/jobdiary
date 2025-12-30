@@ -43,6 +43,38 @@ app.add_middleware(
 )
 
 
+def custom_openapi():
+    """Custom OpenAPI schema with servers configuration."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    from fastapi.openapi.utils import get_openapi
+    
+    openapi_schema = get_openapi(
+        title=settings.app_name,
+        version=settings.app_version,
+        description="A conversational job diary API for tradies",
+        routes=app.routes,
+    )
+    
+    # Add servers - use API_URL if configured, otherwise use a placeholder
+    if settings.api_url:
+        openapi_schema["servers"] = [
+            {"url": settings.api_url, "description": "Production server"}
+        ]
+    else:
+        # Use a placeholder that can be updated by the user
+        openapi_schema["servers"] = [
+            {"url": "https://your-api-url.railway.app", "description": "Update this URL with your actual API URL"}
+        ]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
 # Dependency for protected routes
 def get_current_user(api_key: str = Depends(verify_api_key)) -> str:
     """Dependency that returns after verifying API key."""

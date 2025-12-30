@@ -161,6 +161,7 @@ A FastAPI-based conversational job diary API for tradies. This service stores en
    - `API_KEY`: Your secret API key (required)
    - `ENV`: `prod` (optional)
    - `CORS_ORIGINS`: Your allowed origins (optional, defaults to `*`)
+   - `API_URL`: Your deployed API URL (optional, for OpenAPI servers field - e.g., `https://your-app.railway.app`)
 
 4. **Migrations**
 
@@ -280,6 +281,15 @@ curl -X POST "${BASE_URL}/jobs" \
 ## OpenAPI Schema for GPT Actions
 
 The OpenAPI schema is available at `/openapi.json`. This can be used to configure OpenAI Custom GPT Actions.
+
+**Important:** The OpenAPI schema includes a `servers` field. To set your production URL:
+
+1. Set the `API_URL` environment variable to your deployed API URL:
+   ```bash
+   API_URL=https://your-app.railway.app
+   ```
+
+2. If `API_URL` is not set, the schema will include a placeholder URL that you should update manually in the GPT Actions configuration.
 
 Key points for GPT Actions:
 - All endpoints require `X-API-Key` header

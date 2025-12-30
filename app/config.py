@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "*"
     
+    # API URL for OpenAPI servers (optional, defaults to relative)
+    api_url: Optional[str] = None
+    
     # App metadata
     app_name: str = "JobDiary API"
     app_version: str = "1.0.0"
