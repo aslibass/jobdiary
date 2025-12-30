@@ -25,6 +25,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [phase, setPhase] = useState<string>('idle')
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -43,6 +44,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   const assistantStreamingRef = useRef<boolean>(false)
   const startLockRef = useRef<boolean>(false)
+  const stopRequestedRef = useRef<boolean>(false)
 
   const appendMessage = (role: ChatRole, text: string) => {
     const id = `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -176,6 +178,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
     setError(null)
     setIsConnecting(true)
+    setPhase('getting_token')
     accumulatedTranscriptRef.current = ''
     assistantStreamingRef.current = false
     setMessages([])
@@ -183,6 +186,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
     try {
       // Step 1: Get ephemeral token from our server
+      stopRequestedRef.current = false
       const tokenResponse = await fetch('/api/realtime-token', {
         method: 'POST',
       })
@@ -225,6 +229,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       console.log('Ephemeral token received and stored (length:', clientSecret.length, ')')
 
       // Step 2: Get user's microphone
+      setPhase('getting_microphone')
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -247,6 +252,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       source.connect(analyser)
 
       // Step 3: Create RTCPeerConnection
+      setPhase('creating_peer_connection')
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
       })
@@ -254,8 +260,12 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
       pc.onconnectionstatechange = () => {
         console.log('PC connectionState:', pc.connectionState)
-        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-          onToast?.(`Connection ${pc.connectionState}`, 'error')
+        if (!stopRequestedRef.current && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed')) {
+          const msg = `Realtime connection ${pc.connectionState}`
+          onToast?.(msg, 'error')
+          setError(msg)
+          setIsConnecting(false)
+          setIsRecording(false)
         }
       }
       pc.oniceconnectionstatechange = () => {
@@ -279,10 +289,22 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
       // Step 4: Create data channel for transcription events
       // OpenAI Realtime API uses 'oai-events' as the data channel name
+      setPhase('creating_data_channel')
       const dataChannel = pc.createDataChannel('oai-events', { ordered: true })
       dataChannelRef.current = dataChannel
       dataChannel.onclose = () => console.log('Data channel closed')
       dataChannel.onerror = (e) => console.error('Data channel error', e)
+
+      dataChannel.onclose = () => {
+        console.log('Data channel closed')
+        if (!stopRequestedRef.current) {
+          const msg = 'Realtime data channel closed unexpectedly'
+          onToast?.(msg, 'error')
+          setError(msg)
+          setIsConnecting(false)
+          setIsRecording(false)
+        }
+      }
 
       dataChannel.onmessage = (event) => {
         try {
@@ -400,6 +422,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       // Step 5: Create SDP offer
       // Based on official pattern: create offer, set local description, send immediately
       // Don't wait for ICE gathering - OpenAI will handle it
+      setPhase('creating_offer')
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false,
@@ -431,6 +454,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       const primaryCallUrl = 'https://api.openai.com/v1/realtime/calls'
       const fallbackCallUrl = 'https://api.openai.com/v1/realtime'
 
+      setPhase('creating_call')
       let sdpResponse = await fetch(primaryCallUrl, {
         method: 'POST',
         headers: {
@@ -475,6 +499,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
       }
 
       // Step 7: Set SDP answer as remote description
+      setPhase('setting_remote_description')
       const answerSdp = await sdpResponse.text()
       const answer = {
         type: 'answer' as RTCSdpType,
@@ -484,6 +509,7 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
       setIsConnecting(false)
       setIsRecording(true)
+      setPhase('connected')
       setTranscript('')
       accumulatedTranscriptRef.current = ''
       recordingStartTimeRef.current = Date.now()
@@ -498,7 +524,9 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
     } catch (err: any) {
       console.error('Failed to start recording:', err)
-      setError(err.message || 'Failed to start recording. Please check microphone permissions.')
+      const msg = `${err.message || 'Failed to start recording.'} (phase: ${phase})`
+      setError(msg)
+      onToast?.(msg, 'error')
       setIsConnecting(false)
       stopRecording()
     } finally {
@@ -509,6 +537,8 @@ export default function VoiceRecorder({ onSubmit, disabled, onToast, onCommand }
 
   const stopRecording = () => {
     startLockRef.current = false
+    stopRequestedRef.current = true
+    setPhase('idle')
     // Stop duration timer
     if (durationIntervalRef.current) {
       clearInterval(durationIntervalRef.current)
