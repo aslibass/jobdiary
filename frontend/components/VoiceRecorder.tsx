@@ -45,7 +45,7 @@ export default function VoiceRecorder({ onSubmit, disabled }: VoiceRecorderProps
       }
 
       const tokenData = await tokenResponse.json()
-      ephemeralTokenRef.current = tokenData.client_secret
+      ephemeralTokenRef.current = tokenData.value || tokenData.client_secret
 
       // Step 2: Get user's microphone
       const stream = await navigator.mediaDevices.getUserMedia({

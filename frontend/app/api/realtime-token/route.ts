@@ -15,13 +15,18 @@ export async function POST(request: NextRequest) {
     const openai = new OpenAI({ apiKey: openaiApiKey })
 
     // Request ephemeral token from OpenAI
+    // Note: Check OpenAI SDK docs for exact method name
+    // This may need to be adjusted based on actual SDK version
     const response = await openai.realtime.ephemeralKeys.create({
       expires_in: 60, // Token expires in 60 seconds
     })
 
+    // OpenAI returns ephemeral key - format may vary by SDK version
+    const ephemeralKey = response.client_secret?.value || response.value || response.client_secret
+    
     return NextResponse.json({
-      client_secret: response.client_secret.value,
-      expires_at: response.client_secret.expires_at,
+      value: ephemeralKey,
+      expires_at: response.client_secret?.expires_at || response.expires_at,
     })
   } catch (error: any) {
     console.error('Error creating ephemeral token:', error)
